@@ -131,6 +131,29 @@ async function canReadFamily(fid){
   }
 }
 
+
+/* ---------- エラー表示 ---------- */
+// サーバーから応答がないとき、いつまでも待たないようにする
+function withTimeout(promise, ms = 15000){
+  return Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej({ code: 'timeout' }), ms))]);
+}
+function showError(title, e){
+  const code = e?.code || 'unknown';
+  const hints = {
+    'permission-denied': 'Firestoreのルールで拒否されました。Firebaseコンソールの「Firestore Database」→「ルール」に firestore.rules の内容が貼られて「公開」されているか確認してください。',
+    'timeout': 'サーバーから応答がありません。Firestoreのデータベースがまだ作成されていない（または「ネイティブモード」以外で作られている）可能性があります。通信状態も確認してください。',
+    'unavailable': 'サーバーにつながりません。通信状態か、Firestoreのデータベースが作成されているか確認してください。',
+    'not-found': 'Firestoreのデータベースが見つかりません。「Firestore Database」で（default）データベースを作成してください。',
+    'failed-precondition': 'Firestoreの準備ができていません。データベースが「ネイティブモード」で作成されているか確認してください。'
+  };
+  openSheet(`
+    <h3>${esc(title)}</h3>
+    <p class="note">${esc(hints[code] || '予期しないエラーが起きました。下の内容を教えてもらえれば原因を調べられます。')}</p>
+    <div class="err-box">エラーコード: ${esc(code)}${e?.message ? '<br>' + esc(e.message) : ''}</div>
+    <div class="btns"><button class="ghost" id="err_close">閉じる</button></div>`);
+  $('err_close').onclick = closeSheet;
+}
+
 /* ---------- 家族をはじめる・参加する ---------- */
 function renderOnboard(){
   const code = new URLSearchParams(location.search).get('join') || '';
@@ -179,12 +202,12 @@ async function createFamily(){
     });
     b.set(doc(fs, 'families', famRef.id, 'members', S.user.uid), { ...myMember(), role: 'owner', joinedAt: serverTimestamp() });
     b.set(doc(fs, 'users', S.user.uid), { familyId: famRef.id });
-    await b.commit();
+    await withTimeout(b.commit());
     toast('家族のノートを作りました ✓');
     startFamily(famRef.id);
   }catch(e){
     console.error(e);
-    toast('作成できませんでした（' + (e.code || 'エラー') + '）');
+    showError('家族のノートを作れませんでした', e);
     btn.disabled = false;
   }
 }
@@ -197,8 +220,9 @@ async function joinFamily(){
   try{
     let inv;
     try{
-      inv = await getDoc(doc(fs, 'invites', code));
+      inv = await withTimeout(getDoc(doc(fs, 'invites', code)));
     }catch(e){
+      if(e.code !== 'permission-denied'){ showError('招待コードを確認できませんでした', e); btn.disabled = false; return; }
       inv = null;
     }
     if(!inv || !inv.exists()){
@@ -210,13 +234,13 @@ async function joinFamily(){
     const b = writeBatch(fs);
     b.set(doc(fs, 'families', fid, 'members', S.user.uid), { ...myMember(), code, joinedAt: serverTimestamp() });
     b.set(doc(fs, 'users', S.user.uid), { familyId: fid });
-    await b.commit();
+    await withTimeout(b.commit());
     history.replaceState(null, '', location.pathname);
     toast('家族に参加しました ✓');
     startFamily(fid);
   }catch(e){
     console.error(e);
-    toast('参加できませんでした（' + (e.code || 'エラー') + '）');
+    showError('家族に参加できませんでした', e);
     btn.disabled = false;
   }
 }
