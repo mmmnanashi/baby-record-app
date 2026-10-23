@@ -1,0 +1,77 @@
+rules_version = '2';
+
+// 育児ログ用 Firestore セキュリティルール
+//
+// データ構造
+//   users/{uid}                       … 自分が入っている家族のID（familyId）
+//   families/{familyId}               … 家族の情報（赤ちゃんの名前・生年月日）
+//   families/{familyId}/members/{uid} … 家族のメンバー（この中にいる人だけが読み書きできる）
+//   families/{familyId}/events/{id}   … 授乳・睡眠などの記録
+//   invites/{code}                    … 招待コード（48時間で期限切れ）
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isMember(fid) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/families/$(fid)/members/$(request.auth.uid));
+    }
+
+    // 自分のユーザー情報は自分だけ
+    match /users/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /families/{fid} {
+      // 家族を新しく作れるのは、作成者として自分の名前を入れた場合だけ
+      allow create: if signedIn() && request.resource.data.createdBy == request.auth.uid;
+      // 読む・赤ちゃん情報の更新はメンバーだけ（作成者は変更不可）
+      allow read: if isMember(fid);
+      allow update: if isMember(fid)
+        && request.resource.data.createdBy == resource.data.createdBy;
+      allow delete: if false;
+
+      match /members/{uid} {
+        allow read: if isMember(fid);
+
+        // メンバーになれるのは
+        //  (1) 家族を作った本人
+        //  (2) 有効期限内の、この家族の招待コードを持っている人
+        allow create: if signedIn() && request.auth.uid == uid && (
+          getAfter(/databases/$(database)/documents/families/$(fid)).data.createdBy == uid
+          || (
+            'code' in request.resource.data
+            && get(/databases/$(database)/documents/invites/$(request.resource.data.code)).data.familyId == fid
+            && get(/databases/$(database)/documents/invites/$(request.resource.data.code)).data.expiresAt > request.time
+          )
+        );
+
+        // 自分の表示名だけ変更できる・自分で抜けられる
+        allow update: if signedIn() && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'photo']);
+        allow delete: if signedIn() && request.auth.uid == uid;
+      }
+
+      match /events/{eid} {
+        allow read, delete: if isMember(fid);
+        allow create, update: if isMember(fid)
+          && request.resource.data.type in ['feed', 'sleep', 'diaper', 'temp', 'memo']
+          && request.resource.data.t is number;
+      }
+    }
+
+    match /invites/{code} {
+      // コードを知っている人だけが1件ずつ読める（一覧取得は禁止）
+      allow get: if signedIn() && resource.data.expiresAt > request.time;
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && isMember(request.resource.data.familyId);
+      allow delete: if signedIn() && resource.data.createdBy == request.auth.uid;
+      allow update: if false;
+    }
+  }
+}

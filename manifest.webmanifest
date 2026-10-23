@@ -1,0 +1,16 @@
+{
+  "name": "育児ログ",
+  "short_name": "育児ログ",
+  "description": "家族で共有できる育児記録アプリ",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffeef4",
+  "theme_color": "#ffeef4",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
