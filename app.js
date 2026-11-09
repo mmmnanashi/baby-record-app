@@ -74,6 +74,7 @@ const STOOL = [
   [4, '#dcb945', '黄色'], [5, '#c99a2e', '山吹色'], [6, '#97853a', '黄土色〜うすい緑'], [7, '#56602f', '緑']
 ];
 const stoolOf = n => STOOL[Number(n) - 1] || null;
+const isPoop = e => e.type === 'diaper' && (e.sub === 'うんち' || e.sub === '両方');
 const isMilk = e => e.type === 'feed' && e.sub === 'ミルク';
 const isBreast = e => e.type === 'feed' && e.sub !== 'ミルク';
 // 母乳とミルクを30分以内に続けてあげたときは「1回の授乳」としてまとめる
@@ -683,7 +684,8 @@ function renderStats(){
       feeds: feedSessions(L).length,
       ml: feeds.filter(e => e.sub === 'ミルク').reduce((a,e) => a + (e.amount || 0), 0),
       sleep: L.filter(e => e.type === 'sleep').reduce((a,e) => a + sleepDur(e), 0) / HOUR,
-      diaper: L.filter(e => e.type === 'diaper').length
+      diaper: L.filter(e => e.type === 'diaper').length,
+      poop: L.filter(isPoop).length
     };
   });
 
@@ -723,6 +725,8 @@ function renderStats(){
     ${barsHTML(ICON.feed, 'ミルク量（ml/日）', rows, 'ml', 'var(--feed)', v => v)}
     ${barsHTML(ICON.sleep, '睡眠時間（時間/日）', rows, 'sleep', 'var(--sleep)', v => r1(v))}
     ${barsHTML(ICON.diaper, 'おむつ回数（回/日）', rows, 'diaper', 'var(--diaper)', v => v)}
+    ${barsHTML(ICON.diaper, 'うんち回数（回/日）', rows, 'poop', 'var(--poop)', v => v)}
+    ${stoolColorHTML(start)}
     <div class="card">
       <h3>1日の流れ</h3>
       <div class="rail-row"><span class="d"></span><div class="axis"><span>0時</span><span>6時</span><span>12時</span><span>18時</span><span>24時</span></div></div>
@@ -731,6 +735,37 @@ function renderStats(){
     </div>
   `;
   $('v-stats').querySelectorAll('[data-range]').forEach(b => b.onclick = () => { rangeDays = +b.dataset.range; render(); });
+}
+// うんちの色と状態の内訳（選んだ期間）
+function stoolColorHTML(start){
+  const poops = S.events.filter(e => isPoop(e) && e.t >= start);
+  const withC = poops.filter(e => stoolOf(e.color));
+  let body;
+  if(!poops.length){
+    body = '<p class="note">この期間のうんちの記録はありません。</p>';
+  } else if(!withC.length){
+    body = '<p class="note">色の記録はまだありません。おむつの記録で「うんち」を選ぶと、色を選べます。</p>';
+  } else {
+    const cnt = STOOL.map(([n]) => withC.filter(e => Number(e.color) === n).length);
+    const max = Math.max(...cnt);
+    const top = STOOL[cnt.indexOf(max)];
+    const pale = cnt[0] + cnt[1] + cnt[2];
+    const rowsH = STOOL.map(([n, c, l], i) => `
+      <div class="crow${n <= 3 ? ' pale' : ''}">
+        <span class="cn" style="background:${c}">${n}</span>
+        <span class="cl">${l}</span>
+        <div class="cbar"><i style="width:${cnt[i] / max * 100}%;background:${c}"></i></div>
+        <span class="cc">${cnt[i] ? cnt[i] + '回' : '—'}</span>
+      </div>`).join('');
+    const states = ['かため', 'ふつう', 'やわらかい', '水っぽい'].map(k => [k, poops.filter(e => e.stool === k).length]).filter(x => x[1]);
+    body = `
+      <p class="ctop">いちばん多いのは <span class="cn sm" style="background:${top[1]}">${top[0]}</span> <b>${top[2]}</b>（${max}回）</p>
+      ${pale ? `<div class="stool-warn">1〜3番（白っぽい・うすい黄色）の記録が${pale}回あります。まだ受診していなければ、すぐに小児科を受診してください。</div>` : ''}
+      <div class="crows">${rowsH}</div>
+      <p class="note small">色を記録したうんち ${withC.length}回${poops.length > withC.length ? ` ・ 色の記録なし ${poops.length - withC.length}回` : ''}</p>
+      ${states.length ? `<div class="lbl">うんちの状態</div><div class="chips">${states.map(([k, v]) => `<span class="chip${k === '水っぽい' ? ' chip-w' : ''}">${k} <b>${v}</b></span>`).join('')}</div>` : ''}`;
+  }
+  return `<div class="card"><h3 class="h-ic"><span>${ICON.diaper}</span>うんちの色（${rangeDays}日間）</h3>${body}</div>`;
 }
 function barsHTML(icon, title, rows, key, color, fmt){
   const max = Math.max(1, ...rows.map(r => r[key]));

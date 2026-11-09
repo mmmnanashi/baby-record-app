@@ -241,6 +241,26 @@ button:disabled{opacity:.5;pointer-events:none}
 .tag-milk{background:var(--feed)}
 .tag-breast{background:var(--breast)}
 .rail .f.fb{background:var(--breast)}
+
+/* うんちの回数・色の内訳 */
+:root{--poop:#d4a73c}
+:root[data-theme="night"]{--poop:#b58f3a}
+.ctop{font-size:14px;margin:2px 0 8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.crows{display:flex;flex-direction:column;gap:7px}
+.crow{display:flex;align-items:center;gap:8px;font-size:12px}
+.cn{width:24px;height:24px;border-radius:50%;flex-shrink:0;display:grid;place-items:center;font-size:11px;font-weight:800;color:rgba(70,50,30,.85);border:1.5px solid rgba(0,0,0,.12)}
+.cn.sm{width:22px;height:22px}
+.crow:nth-child(n+6) .cn{color:#fff}
+.cl{width:112px;font-size:11.5px;color:var(--sub);flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crow.pale .cl{color:#e0607e}
+.cbar{flex:1;height:14px;background:var(--line);border-radius:7px;overflow:hidden}
+.cbar i{display:block;height:100%;border-radius:7px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
+.cc{width:34px;text-align:right;font-variant-numeric:tabular-nums}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chip{background:var(--bg);border-radius:999px;padding:4px 10px;font-size:12px}
+.chip-w{background:#fff0e0;color:#c46a1a}
+[data-theme="night"] .chip-w{background:#4a3524;color:#ffbe82}
+[data-theme="night"] .cn{border-color:rgba(255,255,255,.25)}
 </style>
 </head>
 <body data-screen="loading">
