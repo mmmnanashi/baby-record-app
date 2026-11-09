@@ -389,7 +389,7 @@ function describe(e){
   switch(e.type){
     case 'feed':   return e.sub === 'ミルク'
                     ? `ミルク${e.amount ? ' ' + e.amount + 'ml' : ''}`
-                    : `母乳${e.amount ? ' ' + e.amount + '分' : ''}`;
+                    : `母乳${e.amount ? ' ' + esc(e.amount) + '分' : ''}${e.side ? '（' + esc(e.side) + '）' : ''}`;
     case 'sleep':  return e.end ? `寝た ${durTxt(e.end - e.t)}` : `睡眠中（${durTxt(Date.now() - e.t)}）`;
     case 'diaper': {
       const c = stoolOf(e.color);
@@ -421,9 +421,12 @@ function renderToday(){
   const ongoing = S.events.find(e => e.type === 'sleep' && !e.end);
 
   $('v-today').innerHTML = `
-    ${ongoing ? `<div class="banner"><div class="bn-ic">${ICON.sleep}<span>すやすや睡眠中</span></div><small>${hm(ongoing.t)} から ・ 経過 ${durTxt(Date.now() - ongoing.t)}</small></div>` : ''}
+    ${ongoing ? `<button class="banner" id="wakeBanner">
+      <span class="bn-main"><span class="bn-ic">${ICON.sleep}<span>すやすや睡眠中</span></span><small>${hm(ongoing.t)} から ・ 経過 ${durTxt(Date.now() - ongoing.t)}</small></span>
+      <span class="bn-wake">${ICON.wake}<span>タップで<br>起きた</span></span>
+    </button>` : ''}
     <div class="act-grid">
-      <button class="act" style="background:var(--g-breast)" data-act="breast"><b>${ICON.breast}</b><span class="al">母乳<small>${lastBreast?.amount ? lastBreast.amount + '分' : 'すぐ記録'}</small></span></button>
+      <button class="act" style="background:var(--g-breast)" data-act="breast"><b>${ICON.breast}</b><span class="al">母乳<small>${esc([lastBreast?.amount ? lastBreast.amount + '分' : '', lastBreast?.side ? '前回' + lastBreast.side : ''].filter(Boolean).join('・') || 'すぐ記録')}</small></span></button>
       <button class="act" style="background:var(--g-feed)" data-act="milk"><b>${ICON.feed}</b><span class="al">ミルク<small>${lastMilk?.amount ? lastMilk.amount + 'ml' : 'すぐ記録'}</small></span></button>
       <button class="act" style="background:var(--g-sleep)" data-act="sleep"><b>${ongoing ? ICON.wake : ICON.sleep}</b><span class="al">${ongoing ? '起きた' : '寝た'}<small>すぐ記録</small></span></button>
       <button class="act" style="background:var(--g-diaper)" data-act="diaper"><b>${ICON.diaper}</b><span class="al">おむつ<small>おしっこ</small></span></button>
@@ -444,6 +447,7 @@ function renderToday(){
     <div class="card"><h3>今日のタイムライン</h3>${timelineHTML(list)}</div>
   `;
   $('v-today').querySelectorAll('[data-act]').forEach(bindActButton);
+  if($('wakeBanner')) $('wakeBanner').onclick = quickSleep;
   if($('mt_done')) $('mt_done').onclick = miltonDone;
   if($('mt_edit')) $('mt_edit').onclick = miltonEdit;
   $('v-today').querySelectorAll('[data-ev]').forEach(li => li.onclick = () => openForm(null, li.dataset.ev));
@@ -517,7 +521,7 @@ function lastPoopHTML(){
 }
 function sinceRow(label, e, cls, unit){
   return `<div class="since"><span class="tag tag-${cls}">${label}</span>`
-    + (e ? `<b>${durTxt(Date.now() - e.t)}</b><small>${hm(e.t)}${e.amount ? ' ・ ' + esc(e.amount) + unit : ''}</small>` : '<b class="none">—</b>')
+    + (e ? `<b>${durTxt(Date.now() - e.t)}</b><small>${hm(e.t)}${e.amount ? ' ・ ' + esc(e.amount) + unit : ''}${e.side ? ' ・ ' + esc(e.side) : ''}</small>` : '<b class="none">—</b>')
     + '</div>';
 }
 function timelineHTML(list){
@@ -571,10 +575,21 @@ function quickFeed(sub){
   if(last?.amount) ev.amount = last.amount;
   putEvent(ev);
   buzz();
-  actionToast(`${describe(ev)}を記録しました`, [
-    { label: '取り消す', fn: undo(ev.id) },
-    { label: '編集する', fn: () => editLater(ev.id) }
-  ]);
+  if(sub === 'ミルク'){
+    actionToast(`${describe(ev)}を記録しました`, [
+      { label: '取り消す', fn: undo(ev.id) },
+      { label: '編集する', fn: () => editLater(ev.id) }
+    ]);
+  } else {
+    // 母乳はどちらの胸かをワンタップで残せる
+    const setSide = side => { putEvent({ ...ev, side }); toast(`母乳（${side}）で記録しました ✓`); };
+    actionToast(`${describe(ev)}を記録しました。どちらであげた？`, [
+      { label: '取り消す', fn: undo(ev.id) },
+      { label: '左', fn: () => setSide('左') },
+      { label: '右', fn: () => setSide('右') },
+      { label: '両方', fn: () => setSide('両方') }
+    ]);
+  }
 }
 function quickDiaper(){
   const ev = { id: uid(), type: 'diaper', t: Date.now(), sub: 'おしっこ' };
@@ -625,6 +640,7 @@ document.addEventListener('click', e => {
   F[group.dataset.k] = b.dataset.v;
   if(F.type === 'feed' && $('amtLabel')) $('amtLabel').firstChild.textContent = amtLabel();
   if(F.type === 'diaper' && group.dataset.k === 'sub' && $('poopBox')) $('poopBox').hidden = F.sub === 'おしっこ';
+  if(F.type === 'feed' && group.dataset.k === 'sub' && $('sideBox')) $('sideBox').hidden = F.sub === 'ミルク';
 });
 
 function openForm(type, id, preset = {}){
@@ -632,11 +648,14 @@ function openForm(type, id, preset = {}){
   if(ev) type = ev.type;
   const e = ev || {};
   F = {type, id: e.id || null, by: e.by || null, sub: e.sub || preset.sub || ({feed:'母乳', diaper:'おしっこ'}[type] || null),
-       color: stoolOf(e.color) ? Number(e.color) : null, stool: e.stool || null};
+       color: stoolOf(e.color) ? Number(e.color) : null, stool: e.stool || null, side: e.side || null};
 
   let h = `<h3 class="fh"><span class="fh-ic" style="background:${TYPES[type].color}">${TYPES[type].icon}</span>${TYPES[type].label}を${ev ? '編集' : '記録'}</h3>`;
   if(ev && whoName(ev.by)) h += `<p class="note">記録した人：${esc(whoName(ev.by))}</p>`;
-  if(type === 'feed')   h += seg('sub', ['母乳','ミルク'], F.sub);
+  if(type === 'feed'){
+    h += seg('sub', ['母乳','ミルク'], F.sub);
+    h += `<div id="sideBox" ${F.sub === 'ミルク' ? 'hidden' : ''}><div class="lbl">どちらの胸？（任意）</div>${seg('side', ['左','右','両方'], F.side)}</div>`;
+  }
   if(type === 'diaper'){
     h += seg('sub', ['おしっこ','うんち','両方'], F.sub);
     h += `<div id="poopBox" ${F.sub === 'おしっこ' ? 'hidden' : ''}>
@@ -711,6 +730,7 @@ function saveForm(){
     ev.sub = F.sub;
     const v = $('f_amt').value;
     if(v) ev.amount = +v;
+    if(F.sub !== 'ミルク' && F.side) ev.side = F.side;
   }
   if(F.type === 'diaper'){
     ev.sub = F.sub;

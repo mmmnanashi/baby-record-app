@@ -290,6 +290,14 @@ button.mt-sub{text-decoration:underline dotted}
 [data-theme="night"] .milton.over{background:#3e2840;border-color:#7a3f5a}
 [data-theme="night"] .mt-ic .ic{background:#eee3d8}
 [data-theme="night"] .mt-btn{box-shadow:none}
+
+/* 睡眠中の表示（タップで起きた） */
+button.banner{display:flex;align-items:center;gap:10px;width:100%;border:0;text-align:left;font-family:inherit;font-size:15px;cursor:pointer;-webkit-user-select:none;user-select:none;touch-action:manipulation;transition:transform .15s}
+button.banner:active{transform:scale(.98)}
+.bn-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.bn-wake{display:flex;align-items:center;gap:6px;background:#fff;color:#5a6fc0;border-radius:16px;padding:6px 12px 6px 6px;font-size:12px;font-weight:800;line-height:1.25;flex-shrink:0;box-shadow:0 3px 8px -3px rgba(0,0,0,.25)}
+.bn-wake .ic{width:34px;height:34px;flex-shrink:0}
+[data-theme="night"] .bn-wake{background:#eee3d8;color:#4a55a0}
 </style>
 </head>
 <body data-screen="loading">
