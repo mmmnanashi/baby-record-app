@@ -9,6 +9,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="育児ログ">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
+<script>try{var p=localStorage.getItem('babylog_theme')||'auto',h=new Date().getHours();if(p==='on'||(p==='auto'&&(h>=19||h<6)))document.documentElement.dataset.theme='night';}catch(e){}</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-180.png">
@@ -146,6 +147,65 @@ body:not([data-screen="app"]) nav{display:none}
 .card h3.h-ic::before{content:none}
 button:disabled{opacity:.5;pointer-events:none}
 .err-box{background:#fff3f5;border:1px solid #ffd0dd;border-radius:12px;padding:10px 12px;font-size:12px;color:#c94545;word-break:break-all;margin-top:8px}
+
+/* ワンタップ記録 */
+.act{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:manipulation}
+.act small{display:block;font-size:10px;font-weight:600;opacity:.95;margin-top:-4px;max-width:100%;padding:0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.act.pressing{transform:scale(.93)}
+.act-hint{text-align:center;font-size:11px;color:var(--sub);margin:8px 0 0}
+.act-hint b{color:#ff8fab}
+.atoast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translate(-50%,16px);width:min(calc(100vw - 32px),420px);background:#4a3540;color:#fff;border-radius:18px;padding:12px 14px;box-shadow:0 12px 26px -10px rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;z-index:20}
+.atoast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+.at-msg{font-size:14px;font-weight:700}
+.at-btns{display:flex;gap:8px;margin-top:10px}
+.at-btns button{flex:1;border:0;border-radius:12px;padding:11px 0;font-size:14px;font-weight:700;background:rgba(255,255,255,.16);color:#fff;cursor:pointer;font-family:inherit}
+.at-btns .at-undo{background:#fff;color:#5a3e4a}
+/* アドバイス */
+.adv{list-style:none;margin:4px 0 0;padding:0}
+.adv li{display:flex;gap:10px;padding:11px 0;border-top:1px solid var(--line)}
+.adv li:first-child{border-top:0}
+.adv-m{width:24px;height:24px;border-radius:50%;flex-shrink:0;display:grid;place-items:center;color:#fff;font-weight:800;font-size:13px;margin-top:1px}
+.adv-good .adv-m{background:#4cd1a4}
+.adv-info .adv-m{background:#7aa7ff}
+.adv-warn .adv-m{background:#ffa94d}
+.adv-alert .adv-m{background:#ff5c7a}
+.adv li.adv-alert{background:#fff0f3;border-radius:14px;padding:11px 10px;border-top:0;margin-bottom:4px}
+.adv b{font-size:14px;display:block;line-height:1.5}
+.adv p{margin:3px 0 0;font-size:12.5px;color:var(--sub);line-height:1.65}
+.adv-foot{font-size:11.5px;color:var(--sub);background:var(--bg);border-radius:12px;padding:10px 12px;margin:10px 0 0;line-height:1.65}
+.adv-foot a{color:#ff6b8b;font-weight:700}
+/* 夜間モードの切り替え */
+.tseg{display:flex;background:var(--bg);border-radius:12px;padding:3px;gap:3px;margin-top:8px}
+.tseg button{flex:1;border:0;background:none;padding:9px 0;border-radius:9px;font-size:13px;cursor:pointer;color:var(--sub);font-family:inherit}
+.tseg button.on{background:#fff;color:var(--ink);font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.1)}
+
+/* ===== 夜間モード ===== */
+:root[data-theme="night"]{--bg:#1d1930;--card:#2a2544;--ink:#f1e8f6;--sub:#a99fc2;--line:#3a3358;
+  --feed:#c98f4a;--sleep:#6f8fd0;--diaper:#3fae88;--temp:#c96a85;--memo:#8f78cc;
+  --g-feed:linear-gradient(135deg,#c79a4e,#b0683c);--g-sleep:linear-gradient(135deg,#6f8fc9,#5164b5);
+  --g-diaper:linear-gradient(135deg,#5cb895,#2f9a77);--g-temp:linear-gradient(135deg,#c98a9e,#b55573);
+  --g-memo:linear-gradient(135deg,#a68fcf,#7d66c2);color-scheme:dark}
+[data-theme="night"] nav,[data-theme="night"] .sheet{background:#26213d}
+[data-theme="night"] .card,[data-theme="night"] .stat{box-shadow:0 2px 12px rgba(0,0,0,.28)}
+[data-theme="night"] .act{box-shadow:0 6px 14px -6px rgba(0,0,0,.55)}
+[data-theme="night"] .act b,[data-theme="night"] .tl .dot .ic,[data-theme="night"] .bn-ic .ic,[data-theme="night"] .fh-ic .ic{background:#eee3d8}
+[data-theme="night"] .ic,[data-theme="night"] .baby-wrap,[data-theme="night"] .empty::before,[data-theme="night"] .login-art,[data-theme="night"] .hello-ic{filter:brightness(.88)}
+[data-theme="night"] .deco{opacity:.85}
+[data-theme="night"] .banner{background:linear-gradient(135deg,#5b6fb5,#4a55a0);box-shadow:none}
+[data-theme="night"] .sheet input,[data-theme="night"] .sheet textarea,[data-theme="night"] .set-row input{background:#1d1930;color:var(--ink);border-color:var(--line)}
+[data-theme="night"] .seg button.on,[data-theme="night"] .tseg button.on{background:#3d3661;color:var(--ink)}
+[data-theme="night"] .range button.on{background:#8e7ad6;color:#fff}
+[data-theme="night"] .toast{background:#f1e8f6;color:#2a2544}
+[data-theme="night"] .atoast{background:#3d3661}
+[data-theme="night"] .danger{background:#4a2a38;color:#ff9fb2}
+[data-theme="night"] .primary{box-shadow:none}
+[data-theme="night"] .gbtn{background:#2a2544;color:var(--ink)}
+[data-theme="night"] .rail{background:#3a3358}
+[data-theme="night"] .members small{background:#3a3358}
+[data-theme="night"] .stat::after{color:#4a4170}
+[data-theme="night"] .adv li.adv-alert{background:#4a2a3a}
+[data-theme="night"] .err-box{background:#3a2635;border-color:#5a3346;color:#ff9fb2}
+[data-theme="night"] .code-box{border-color:#6b5a9a}
 </style>
 </head>
 <body data-screen="loading">

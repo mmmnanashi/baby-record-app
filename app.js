@@ -21,6 +21,43 @@ const fs = initializeFirestore(fbApp, {
 
 /* ---------- 定数・ユーティリティ ---------- */
 const $ = id => document.getElementById(id);
+
+/* ---------- 夜間モード ---------- */
+const THEME_KEY = 'babylog_theme';   // auto / on / off（端末ごとの設定）
+function themePref(){ try{ return localStorage.getItem(THEME_KEY) || 'auto'; }catch(e){ return 'auto'; } }
+function isNightHour(){ const h = new Date().getHours(); return h >= 19 || h < 6; }
+function applyTheme(){
+  const p = themePref();
+  const night = p === 'on' || (p === 'auto' && isNightHour());
+  const want = night ? 'night' : 'day';
+  if(document.documentElement.dataset.theme !== want) document.documentElement.dataset.theme = want;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', night ? '#1d1930' : '#ffeef4');
+}
+applyTheme();
+
+/* ---------- 振動・取り消しボタン付きの通知 ---------- */
+const buzz = (ms = 25) => { try{ navigator.vibrate?.(ms); }catch(e){} };
+const atoast = document.createElement('div');
+atoast.className = 'atoast';
+document.body.appendChild(atoast);
+let atoastTimer;
+function hideAtoast(){ atoast.classList.remove('show'); }
+function actionToast(msg, actions){
+  document.getElementById('toast')?.classList.remove('show');
+  atoast.innerHTML = '<div class="at-msg"></div><div class="at-btns"></div>';
+  atoast.querySelector('.at-msg').textContent = msg;
+  const box = atoast.querySelector('.at-btns');
+  actions.forEach((a, i) => {
+    const b = document.createElement('button');
+    b.textContent = a.label;
+    if(i === 0) b.className = 'at-undo';
+    b.onclick = () => { hideAtoast(); a.fn(); };
+    box.appendChild(b);
+  });
+  atoast.classList.add('show');
+  clearTimeout(atoastTimer);
+  atoastTimer = setTimeout(hideAtoast, 6000);
+}
 const pad = n => String(n).padStart(2, '0');
 const MIN = 60000, HOUR = 3600000, DAY = 86400000;
 const LEGACY_KEY = 'babylog_v1';
@@ -355,12 +392,13 @@ function renderToday(){
   $('v-today').innerHTML = `
     ${ongoing ? `<div class="banner"><div class="bn-ic">${ICON.sleep}<span>すやすや睡眠中</span></div><small>${hm(ongoing.t)} から ・ 経過 ${durTxt(Date.now() - ongoing.t)}</small></div>` : ''}
     <div class="act-grid">
-      <button class="act" style="background:var(--g-feed)" data-act="feed"><b>${ICON.feed}</b>授乳</button>
-      <button class="act" style="background:var(--g-sleep)" data-act="sleep"><b>${ongoing ? ICON.wake : ICON.sleep}</b>${ongoing ? '起きた' : '寝た'}</button>
-      <button class="act" style="background:var(--g-diaper)" data-act="diaper"><b>${ICON.diaper}</b>おむつ</button>
-      <button class="act" style="background:var(--g-temp)" data-act="temp"><b>${ICON.temp}</b>体温</button>
-      <button class="act" style="background:var(--g-memo)" data-act="memo"><b>${ICON.memo}</b>メモ</button>
+      <button class="act" style="background:var(--g-feed)" data-act="feed"><b>${ICON.feed}</b>授乳<small>${esc(feedCaption(lastFeed))}</small></button>
+      <button class="act" style="background:var(--g-sleep)" data-act="sleep"><b>${ongoing ? ICON.wake : ICON.sleep}</b>${ongoing ? '起きた' : '寝た'}<small>すぐ記録</small></button>
+      <button class="act" style="background:var(--g-diaper)" data-act="diaper"><b>${ICON.diaper}</b>おむつ<small>おしっこ</small></button>
+      <button class="act" style="background:var(--g-temp)" data-act="temp"><b>${ICON.temp}</b>体温<small>入力</small></button>
+      <button class="act" style="background:var(--g-memo)" data-act="memo"><b>${ICON.memo}</b>メモ<small>入力</small></button>
     </div>
+    <p class="act-hint">タップですぐ記録 ・ 授乳とおむつは<b>長押し</b>で詳しく入力</p>
     <div class="stats">
       <div class="stat"><div class="k">今日の授乳</div><div class="v">${feeds.length}<small>回</small></div><div class="d">ミルク合計 ${milk}ml</div></div>
       <div class="stat"><div class="k">今日の睡眠</div><div class="v">${durTxt(sleepMs)}</div><div class="d">${sleeps.length}回</div></div>
@@ -369,10 +407,7 @@ function renderToday(){
     </div>
     <div class="card"><h3>今日のタイムライン</h3>${timelineHTML(list)}</div>
   `;
-  $('v-today').querySelectorAll('[data-act]').forEach(b => b.onclick = () => {
-    const t = b.dataset.act;
-    if(t === 'sleep') quickSleep(); else openForm(t);
-  });
+  $('v-today').querySelectorAll('[data-act]').forEach(bindActButton);
   $('v-today').querySelectorAll('[data-ev]').forEach(li => li.onclick = () => openForm(null, li.dataset.ev));
 }
 function timelineHTML(list){
@@ -388,15 +423,75 @@ function timelineHTML(list){
     </li>`;
   }).join('') + '</ul>';
 }
+// ボタン：タップで即記録、授乳とおむつは長押しで入力画面
+function bindActButton(b){
+  const t = b.dataset.act;
+  const quick = t === 'feed' || t === 'diaper';
+  let timer = null, long = false;
+  if(quick){
+    const cancel = () => { clearTimeout(timer); timer = null; b.classList.remove('pressing'); };
+    b.addEventListener('pointerdown', () => {
+      long = false;
+      b.classList.add('pressing');
+      timer = setTimeout(() => { long = true; cancel(); buzz(40); openForm(t); }, 550);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => b.addEventListener(ev, cancel));
+    b.addEventListener('contextmenu', e => e.preventDefault());
+  }
+  b.onclick = () => {
+    if(long){ long = false; return; }
+    if(t === 'sleep') quickSleep();
+    else if(t === 'feed') quickFeed();
+    else if(t === 'diaper') quickDiaper();
+    else openForm(t);
+  };
+}
+function feedCaption(last){
+  if(!last || last.sub !== 'ミルク') return '母乳' + (last?.amount ? last.amount + '分' : '');
+  return 'ミルク' + (last.amount ? last.amount : '');
+}
+function editLater(id){
+  if(S.events.find(x => x.id === id)) openForm(null, id);
+  else toast('少し待ってから、タイムラインで編集してね');
+}
+const undo = id => () => { removeEvent(id); toast('取り消しました'); };
+
+function quickFeed(){
+  const feeds = S.events.filter(e => e.type === 'feed');
+  const last = feeds[feeds.length - 1];
+  const ev = { id: uid(), type: 'feed', t: Date.now(), sub: last?.sub === 'ミルク' ? 'ミルク' : '母乳' };
+  if(last?.amount) ev.amount = last.amount;
+  putEvent(ev);
+  buzz();
+  actionToast(`授乳を記録しました（${describe(ev)}）`, [
+    { label: '取り消す', fn: undo(ev.id) },
+    { label: '編集する', fn: () => editLater(ev.id) }
+  ]);
+}
+function quickDiaper(){
+  const ev = { id: uid(), type: 'diaper', t: Date.now(), sub: 'おしっこ' };
+  putEvent(ev);
+  buzz();
+  const change = sub => { putEvent({ ...ev, sub }); toast(`「${sub}」に変更しました ✓`); };
+  actionToast('おむつ（おしっこ）を記録しました', [
+    { label: '取り消す', fn: undo(ev.id) },
+    { label: 'うんちに変更', fn: () => change('うんち') },
+    { label: '両方', fn: () => change('両方') }
+  ]);
+}
 function quickSleep(){
   const on = S.events.find(e => e.type === 'sleep' && !e.end);
+  buzz();
   if(on){
     const end = Date.now();
     putEvent({ ...on, end });
-    toast('おはよう ☀️ 睡眠 ' + durTxt(end - on.t));
+    actionToast('おはよう ☀️ 睡眠 ' + durTxt(end - on.t), [
+      { label: '取り消す', fn: () => { putEvent({ ...on, end: null }); toast('取り消しました'); } }
+    ]);
   } else {
-    putEvent({ id: uid(), type: 'sleep', t: Date.now(), end: null });
-    toast('おやすみ 🌙');
+    const ev = { id: uid(), type: 'sleep', t: Date.now(), end: null };
+    putEvent(ev);
+    actionToast('おやすみ 🌙 睡眠を記録中', [{ label: '取り消す', fn: undo(ev.id) }]);
   }
 }
 
@@ -438,7 +533,7 @@ function openForm(type, id){
   $('f_cancel').onclick = closeSheet;
   if($('f_del')) $('f_del').onclick = delEv;
 }
-function openSheet(html){ $('sheet').innerHTML = html; $('ov').classList.add('show'); }
+function openSheet(html){ hideAtoast(); $('sheet').innerHTML = html; $('ov').classList.add('show'); }
 function closeSheet(){ $('ov').classList.remove('show'); }
 $('ov').onclick = e => { if(e.target === $('ov')) closeSheet(); };
 
@@ -520,6 +615,7 @@ function renderStats(){
   };
 
   $('v-stats').innerHTML = `
+    ${adviceHTML()}
     <div class="range">${[7,14,30].map(n => `<button class="${n === rangeDays ? 'on' : ''}" data-range="${n}">${n}日間</button>`).join('')}</div>
     <div class="stats">
       <div class="stat"><div class="k">1日あたりの授乳</div><div class="v">${(sumOf('feeds')/n).toFixed(1)}<small>回</small></div><div class="d">期間合計 ${sumOf('feeds')}回</div></div>
@@ -552,6 +648,178 @@ function barsHTML(icon, title, rows, key, color, fmt){
   }).join('')}</div></div>`;
 }
 
+/* ---------- アドバイス ---------- */
+// 一般的な目安と記録を比べて、状態とアドバイスを出す（診断ではない）
+//  授乳回数（新生児〜2か月）1日8〜12回 / おしっこ 生後1週ごろから1日6回以上
+//  発熱 38℃以上（生後3か月未満は早めの受診）
+//  睡眠 National Sleep Foundation: 0〜3か月14〜17時間, 4〜11か月12〜15時間, 1〜2歳11〜14時間, 3〜5歳10〜13時間
+function babyAge(){
+  if(!S.baby.birth) return null;
+  const b = new Date(S.baby.birth + 'T00:00');
+  const days = Math.floor((startOfDay(Date.now()) - b.getTime()) / DAY);
+  if(isNaN(days) || days < 0) return null;
+  const now = new Date();
+  let months = (now.getFullYear() - b.getFullYear()) * 12 + now.getMonth() - b.getMonth();
+  if(now.getDate() < b.getDate()) months--;
+  return { days, months: Math.max(0, months) };
+}
+const f1 = x => (Math.round(x * 10) / 10).toFixed(1).replace(/\.0$/, '');
+function dayStats(s){
+  const L = S.events.filter(e => e.t >= s && e.t < s + DAY);
+  const d = L.filter(e => e.type === 'diaper');
+  const sl = L.filter(e => e.type === 'sleep');
+  return {
+    any: L.length > 0,
+    feeds: L.filter(e => e.type === 'feed').length,
+    diapers: d.length,
+    wet: d.filter(e => e.sub === 'おしっこ' || e.sub === '両方').length,
+    sleepN: sl.length,
+    sleepH: sl.reduce((a, e) => a + sleepDur(e), 0) / HOUR
+  };
+}
+function avgFeedGap(from, to){
+  const ts = S.events.filter(e => e.type === 'feed' && e.t >= from && e.t < to).map(e => e.t);
+  const g = [];
+  for(let i = 1; i < ts.length; i++){ const x = ts[i] - ts[i-1]; if(x < 8 * HOUR) g.push(x); }
+  return g.length >= 5 ? g.reduce((a, b) => a + b, 0) / g.length : null;
+}
+function longestSleep(from, to){
+  const L = S.events.filter(e => e.type === 'sleep' && e.end && e.t >= from && e.t < to);
+  return L.length ? Math.max(...L.map(e => e.end - e.t)) : null;
+}
+function sleepRange(age){
+  if(!age) return null;
+  if(age.months < 4) return [14, 17, '0〜3か月'];
+  if(age.months < 12) return [12, 15, '4〜11か月'];
+  if(age.months < 24) return [11, 14, '1〜2歳'];
+  return [10, 13, '3〜5歳'];
+}
+const avgOf = (arr, k) => arr.reduce((a, x) => a + x[k], 0) / arr.length;
+
+function buildAdvice(){
+  const A = [];
+  const add = (level, title, text) => A.push({ level, title, text });
+  const age = babyAge();
+  const now = Date.now();
+  const today = startOfDay(now);
+
+  // 体温（直近24時間の最新）
+  const temps = S.events.filter(e => e.type === 'temp' && e.t >= now - DAY && typeof e.value === 'number');
+  const lt = temps[temps.length - 1];
+  if(lt){
+    const v = lt.value;
+    if(v >= 38 && age && age.days < 90){
+      add('alert', `生後3か月未満で${v}℃の熱があります（${hm(lt.t)}）`,
+        'この月齢の38℃以上の発熱は、元気そうに見えても早めの受診がすすめられています。夜間・休日でも、かかりつけ医や救急外来に連絡してください。');
+    } else if(v >= 38){
+      add('warn', `${v}℃の熱があります（${hm(lt.t)}）`,
+        '母乳・ミルクが飲めているか、おしっこが出ているか、機嫌はどうかを見てください。ぐったりしている、飲めない、呼吸が苦しそう、けいれんがあるときはすぐ受診を。'
+        + (age ? '' : '生後3か月未満なら、元気そうでも早めに受診してください。'));
+    } else if(v >= 37.5){
+      add('info', `体温が少し高めです（${v}℃・${hm(lt.t)}）`,
+        '赤ちゃんはもともと体温が高めで、着せすぎや室温、授乳や泣いた直後でも上がります。服や室温を調整して、30分ほどしてから測り直してみてください。');
+    }
+  }
+
+  // 直近3日間（今日を除く、記録がある日だけ）
+  const ds = [1, 2, 3].map(i => { const d = new Date(today); d.setDate(d.getDate() - i); return d.getTime(); })
+    .map(dayStats).filter(x => x.any);
+
+  if(!ds.length){
+    add('info', '記録がたまると、アドバイスが表示されます',
+      '丸1日分の記録がたまると、授乳・おしっこ・睡眠のようすを目安と比べてお知らせします。');
+  }
+
+  // 授乳回数（生後2か月ごろまで）
+  const dsF = ds.filter(x => x.feeds > 0);
+  if(dsF.length && age && age.days < 60){
+    const a = avgOf(dsF, 'feeds');
+    if(a < 7) add('warn', `授乳回数が少なめです（1日平均${f1(a)}回）`,
+      '記録漏れがなければ、生後2か月ごろまでは1日8〜12回くらいが目安です。おしっこの回数や体重の増えも合わせて見て、少ない日が続くときは小児科や助産師に相談してください。');
+    else if(a < 8) add('info', `授乳回数はやや少なめです（1日平均${f1(a)}回）`,
+      '目安は1日8〜12回くらいです。おしっこがしっかり出ていれば、飲めているサインです。');
+    else if(a <= 12) add('good', `授乳回数は目安の範囲です（1日平均${f1(a)}回）`,
+      '生後2か月ごろまでの目安（1日8〜12回）に入っています。');
+    else add('info', `授乳回数が多めです（1日平均${f1(a)}回）`,
+      '急によく飲みたがる時期や、1回に飲む量が少ないときは回数が増えることがあります。おしっこが出て機嫌がよければ、心配しすぎなくて大丈夫です。');
+  }
+
+  // 授乳間隔の変化（直近7日 と その前の7日）
+  const g1 = avgFeedGap(today - 6 * DAY, now), g0 = avgFeedGap(today - 13 * DAY, today - 6 * DAY);
+  if(g1 && g0){
+    if(g1 - g0 >= 15 * MIN) add('good', `授乳の間隔がのびてきました（${durTxt(g0)} → ${durTxt(g1)}）`,
+      '1回にしっかり飲めるようになってきたサインです。');
+    else if(g0 - g1 >= 30 * MIN) add('info', `授乳の間隔が短くなっています（${durTxt(g0)} → ${durTxt(g1)}）`,
+      '急によく飲みたがる時期かもしれません。数日で落ち着くことが多いです。おしっこが減る、機嫌が悪い日が続くときは相談してください。');
+  }
+
+  // おしっこ（生後1週〜6か月ごろ）
+  const dsD = ds.filter(x => x.diapers > 0);
+  if(dsD.length && (!age || (age.days >= 6 && age.months < 6))){
+    const w = avgOf(dsD, 'wet');
+    if(w < 5) add('warn', `おむつがぬれる回数が少なめです（1日平均${f1(w)}回）`,
+      '記録漏れがなければ、母乳・ミルクが足りているかの目安になります。生後1週ごろからは1日6回以上ぬれるのが目安です。おしっこの色が濃い黄色でないか、口の中が乾いていないかも見て、少ない日が続くときや元気がないときは小児科に相談してください。');
+    else if(w < 6) add('info', `おしっこはほぼ目安どおりです（1日平均${f1(w)}回）`,
+      '目安は1日6回以上です。少ない日が続かないか見ていきましょう。');
+    else add('good', `おしっこはしっかり出ています（1日平均${f1(w)}回）`,
+      '1日6回以上ぬれていれば、しっかり飲めているサインの一つです。');
+  }
+
+  // うんち（3日以上記録がない）
+  const diapAll = S.events.filter(e => e.type === 'diaper');
+  if(diapAll.length && diapAll[0].t < now - 3 * DAY){
+    const poops = diapAll.filter(e => e.sub === 'うんち' || e.sub === '両方');
+    const lp = poops[poops.length - 1];
+    const d = Math.floor((now - (lp ? lp.t : diapAll[0].t)) / DAY);
+    if(d >= 3){
+      const young = age && age.days < 30;
+      add(young ? 'warn' : 'info', `うんちが${d}日${lp ? '' : '以上'}出ていません`,
+        '記録漏れがなければ、' + (young
+          ? '生後1か月ごろまでは毎日出ることが多いので、出ない日が続くときは早めに小児科に相談してください。'
+          : '数日出ないこともあり、機嫌がよく飲めていれば様子を見てよいことも多いです。')
+        + 'お腹がはって苦しそう、吐く、機嫌が悪い、硬くて出にくそうなときは小児科に相談してください。');
+    }
+  }
+
+  // 睡眠時間
+  const dsS = ds.filter(x => x.sleepN > 0);
+  const rng = sleepRange(age);
+  if(dsS.length && rng){
+    const h = avgOf(dsS, 'sleepH');
+    const [lo, hi, label] = rng;
+    if(h < lo) add('info', `睡眠は目安より短めです（1日平均${f1(h)}時間）`,
+      `${label}の目安は1日${lo}〜${hi}時間（お昼寝を含む）です。お昼寝も記録できているか確認してみてください。眠る時間は個人差が大きく、機嫌がよく育っていれば心配いらないことも多いです。寝つきが悪い日が続くなら、夜は部屋を暗く静かにする、寝る前の流れを毎日同じにする、などを試してみてください。`);
+    else if(h > hi) add('info', `よく眠っています（1日平均${f1(h)}時間）`,
+      `${label}の目安は1日${lo}〜${hi}時間です。よく眠ること自体は多くの場合心配いりませんが、起こしても飲まない、ぐったりしているなどのときは小児科に相談してください。`);
+    else add('good', `睡眠時間は目安の範囲です（1日平均${f1(h)}時間）`,
+      `${label}の目安（1日${lo}〜${hi}時間）に入っています。`);
+  }
+
+  // いちばん長い睡眠ののび
+  const l1 = longestSleep(today - 6 * DAY, now), l0 = longestSleep(today - 13 * DAY, today - 6 * DAY);
+  if(l1 && l0 && l1 - l0 >= 30 * MIN) add('good', `まとまって眠れるようになってきました（最長 ${durTxt(l0)} → ${durTxt(l1)}）`,
+    '眠りのリズムが育ってきているサインです。');
+
+  if(!age) add('info', '生年月日を設定すると、アドバイスが詳しくなります',
+    '「設定」で赤ちゃんの生年月日を入れると、月齢に合わせた目安と比べられます。');
+  if(!A.length) add('good', '特に気になる点はありません', 'この調子で記録を続けていきましょう。');
+
+  const order = { alert: 0, warn: 1, info: 2, good: 3 };
+  return A.sort((a, b) => order[a.level] - order[b.level]);
+}
+
+function adviceHTML(){
+  const mark = { alert: '!', warn: '!', info: 'i', good: '✓' };
+  return `<div class="card advice"><h3>今のようすとアドバイス</h3>
+    <p class="note">直近3日間の記録と月齢から見た目安です</p>
+    <ul class="adv">${buildAdvice().map(a => `
+      <li class="adv-${a.level}"><span class="adv-m">${mark[a.level]}</span>
+        <div><b>${esc(a.title)}</b><p>${esc(a.text)}</p></div></li>`).join('')}
+    </ul>
+    <p class="adv-foot">記録をもとにした一般的な目安で、診断ではありません。いつもと様子が違う、ぐったりしている、飲めないなどのときは、迷わず小児科へ。夜間・休日に迷ったら <a href="tel:%238000">#8000</a>（こども医療でんわ相談）へ。</p>
+  </div>`;
+}
+
 /* ---------- 設定 ---------- */
 function renderSet(){
   const me = S.members[S.user.uid] || {};
@@ -577,6 +845,11 @@ function renderSet(){
       <button class="linkbtn" id="s_export">バックアップを書き出す（JSON）</button>
       <button class="linkbtn" id="s_import">バックアップから読み込む</button>
     </div>
+    <div class="card"><h3>夜間モード</h3>
+      <p class="note">夜はまぶしくない暗い画面になります（この端末だけの設定）。</p>
+      <div class="tseg">${[['auto', '自動（19〜6時）'], ['on', 'いつも'], ['off', 'オフ']].map(([v, l]) =>
+        `<button data-theme-v="${v}" class="${themePref() === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+    </div>
     <div class="card"><h3>アカウント</h3>
       <p class="note">${esc(S.user.email || '')} でログイン中</p>
       <button class="linkbtn" id="s_logout">ログアウト</button>
@@ -589,6 +862,11 @@ function renderSet(){
   $('s_import').onclick = () => $('importFile').click();
   $('s_logout').onclick = () => signOut(auth);
   $('s_leave').onclick = leaveFamily;
+  $('v-set').querySelectorAll('[data-theme-v]').forEach(b => b.onclick = () => {
+    try{ localStorage.setItem(THEME_KEY, b.dataset.themeV); }catch(e){}
+    applyTheme();
+    renderSet();
+  });
 }
 
 function saveBaby(){
@@ -731,6 +1009,7 @@ async function offerLegacyImport(){
 /* ---------- 共通 ---------- */
 let toastTimer;
 function toast(msg){
+  hideAtoast();
   const t = $('toast');
   t.textContent = msg;
   t.classList.add('show');
@@ -738,7 +1017,10 @@ function toast(msg){
   toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
 }
 
-setInterval(() => { if(S.ready && view === 'today' && !$('ov').classList.contains('show')) renderToday(); }, 30000);
+setInterval(() => {
+  applyTheme();
+  if(S.ready && view === 'today' && !$('ov').classList.contains('show')) renderToday();
+}, 30000);
 
 if('serviceWorker' in navigator && location.protocol === 'https:'){
   navigator.serviceWorker.register('./sw.js').catch(() => {});
