@@ -109,6 +109,7 @@ const S = {
   user: null,
   familyId: null,
   baby: {name:'', birth:''},
+  milton: null,     // ミルトン（消毒液）を最後に交換した時刻 {t, by}
   members: {},     // uid -> {name, photo}
   events: [],
   ready: false,
@@ -163,7 +164,7 @@ $('loginBtn').onclick = async () => {
 onAuthStateChanged(auth, async user => {
   stopListeners();
   S.user = user;
-  S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.ready = false;
+  S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.milton = null; S.ready = false;
   if(!user){ showScreen('login'); return; }
   showScreen('loading');
   try{
@@ -336,6 +337,7 @@ function startFamily(fid){
 
   S.unsubs.push(onSnapshot(doc(fs, 'families', fid), snap => {
     S.baby = snap.data()?.baby || {name:'', birth:''};
+    S.milton = snap.data()?.milton || null;
     gotFamily = true; ready();
   }, onErr));
 
@@ -429,6 +431,7 @@ function renderToday(){
       <button class="act" style="background:var(--g-memo)" data-act="memo"><b>${ICON.memo}</b><span class="al">メモ<small>入力</small></span></button>
     </div>
     <p class="act-hint">タップですぐ記録 ・ 母乳・ミルク・おむつは<b>長押し</b>で詳しく入力</p>
+    ${miltonHTML()}
     <div class="stats">
       <div class="stat"><div class="k">今日の授乳</div><div class="v">${feedSessions(list).length}<small>回</small></div><div class="d">ミルク${todayMilk}回 ${milk}ml ・ 母乳${todayBreast}回</div></div>
       <div class="stat"><div class="k">今日の睡眠</div><div class="v">${durTxt(sleepMs)}</div><div class="d">${sleeps.length}回</div></div>
@@ -441,8 +444,66 @@ function renderToday(){
     <div class="card"><h3>今日のタイムライン</h3>${timelineHTML(list)}</div>
   `;
   $('v-today').querySelectorAll('[data-act]').forEach(bindActButton);
+  if($('mt_done')) $('mt_done').onclick = miltonDone;
+  if($('mt_edit')) $('mt_edit').onclick = miltonEdit;
   $('v-today').querySelectorAll('[data-ev]').forEach(li => li.onclick = () => openForm(null, li.dataset.ev));
 }
+/* ---------- ミルトン（哺乳びんの消毒液） ---------- */
+// 薬液は1日1回の交換で24時間有効とされているので、24時間を目安に表示
+const MILTON_LIMIT = 24 * HOUR;
+function miltonHTML(){
+  const m = S.milton;
+  const t = m && typeof m.t === 'number' ? m.t : null;
+  const ms = t ? Date.now() - t : 0;
+  const over = t && ms >= MILTON_LIMIT;
+  const soon = t && !over && ms >= MILTON_LIMIT - 3 * HOUR;
+  const d = t ? new Date(t) : null;
+  const when = t ? (startOfDay(t) === startOfDay(Date.now()) ? '' : `${d.getMonth() + 1}/${d.getDate()} `) + hm(t) : '';
+  const who = t && whoName(m.by) ? ` ・ ${esc(whoName(m.by))}` : '';
+  const pct = t ? Math.min(100, ms / MILTON_LIMIT * 100) : 0;
+  return `<div class="milton ${over ? 'over' : soon ? 'soon' : ''}">
+    <span class="mt-ic">${ICON.milton}</span>
+    <div class="mt-body">
+      <div class="mt-k">ミルトン交換から</div>
+      ${t ? `<div class="mt-v">${durTxt(ms)}</div>
+        <div class="mt-bar"><i style="width:${pct}%"></i></div>
+        <button class="mt-sub" id="mt_edit">${when}に交換${who}${over ? ' ・ <b>交換の目安（24時間）を過ぎています</b>' : soon ? ' ・ そろそろ交換' : ''}</button>`
+        : `<div class="mt-v none">まだ記録がありません</div><div class="mt-sub">交換したら右のボタンを押してね</div>`}
+    </div>
+    <button class="mt-btn" id="mt_done">交換した</button>
+  </div>`;
+}
+function saveMilton(val){
+  updateDoc(doc(fs, 'families', S.familyId), { milton: val }).catch(e => { console.error(e); toast('保存に失敗しました'); });
+}
+function miltonDone(){
+  const prev = S.milton || null;
+  saveMilton({ t: Date.now(), by: S.user.uid });
+  buzz();
+  actionToast('ミルトンの交換を記録しました', [
+    { label: '取り消す', fn: () => { saveMilton(prev); toast('取り消しました'); } },
+    { label: '時刻を直す', fn: miltonEdit }
+  ]);
+}
+function miltonEdit(){
+  const t = S.milton?.t || Date.now();
+  openSheet(`
+    <h3 class="fh"><span class="fh-ic" style="background:var(--g-milton)">${ICON.milton}</span>ミルトンの交換時刻</h3>
+    <p class="note">薬液は24時間を目安に交換します。</p>
+    <label>交換した時刻<input id="mt_t" type="datetime-local" value="${toInput(t)}"></label>
+    <div class="btns"><button class="ghost" id="mt_cancel">やめる</button><button class="primary" id="mt_save">保存</button></div>`);
+  $('mt_cancel').onclick = closeSheet;
+  $('mt_save').onclick = () => {
+    const v = $('mt_t').value;
+    if(!v){ toast('時刻を入れてね'); return; }
+    const nt = new Date(v).getTime();
+    if(nt > Date.now() + 5 * MIN){ toast('未来の時刻は入れられません'); return; }
+    saveMilton({ t: nt, by: S.milton?.by || S.user.uid });
+    closeSheet();
+    toast('保存しました ✓');
+  };
+}
+
 // 最後のうんち（今日でなければ日付も）
 function lastPoopHTML(){
   const ps = S.events.filter(isPoop);
@@ -1096,7 +1157,7 @@ async function leaveFamily(){
     stopListeners();
     await deleteDoc(doc(fs, 'families', fid, 'members', S.user.uid));
     await setDoc(doc(fs, 'users', S.user.uid), { familyId: null });
-    S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.ready = false;
+    S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.milton = null; S.ready = false;
     renderOnboard();
     showScreen('onboard');
     toast('家族から抜けました');
