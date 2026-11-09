@@ -432,7 +432,7 @@ function renderToday(){
     <div class="stats">
       <div class="stat"><div class="k">今日の授乳</div><div class="v">${feedSessions(list).length}<small>回</small></div><div class="d">ミルク${todayMilk}回 ${milk}ml ・ 母乳${todayBreast}回</div></div>
       <div class="stat"><div class="k">今日の睡眠</div><div class="v">${durTxt(sleepMs)}</div><div class="d">${sleeps.length}回</div></div>
-      <div class="stat"><div class="k">今日のおむつ</div><div class="v">${diapers.length}<small>回</small></div><div class="d">おしっこ ${pee} ・ うんち ${poop}</div></div>
+      <div class="stat"><div class="k">今日のおむつ</div><div class="v">${diapers.length}<small>回</small></div><div class="d">おしっこ ${pee} ・ うんち ${poop}</div>${lastPoopHTML()}</div>
       <div class="stat"><div class="k">前回から</div>
         ${sinceRow('ミルク', lastMilk, 'milk', 'ml')}
         ${sinceRow('母乳', lastBreast, 'breast', '分')}
@@ -442,6 +442,17 @@ function renderToday(){
   `;
   $('v-today').querySelectorAll('[data-act]').forEach(bindActButton);
   $('v-today').querySelectorAll('[data-ev]').forEach(li => li.onclick = () => openForm(null, li.dataset.ev));
+}
+// 最後のうんち（今日でなければ日付も）
+function lastPoopHTML(){
+  const ps = S.events.filter(isPoop);
+  const e = ps[ps.length - 1];
+  if(!e) return '<div class="lastpoop">最後のうんち <b>—</b></div>';
+  const d = new Date(e.t), ms = Date.now() - e.t;
+  const when = (startOfDay(e.t) === startOfDay(Date.now()) ? '' : `${d.getMonth() + 1}/${d.getDate()} `) + hm(e.t);
+  const ago = ms < HOUR ? `${Math.max(0, Math.round(ms / MIN))}分前` : ms < DAY ? `${durTxt(ms)}前` : `${Math.floor(ms / DAY)}日前`;
+  const c = stoolOf(e.color);
+  return `<div class="lastpoop">最後のうんち<br><b>${when}</b>${c ? ` <span class="sw" style="background:${c[1]}"></span>` : ''}<small>（${ago}）</small></div>`;
 }
 function sinceRow(label, e, cls, unit){
   return `<div class="since"><span class="tag tag-${cls}">${label}</span>`
