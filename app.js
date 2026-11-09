@@ -68,6 +68,12 @@ const TYPES = {
   temp:   {label:'体温', icon:ICON.temp, color:'var(--g-temp)'},
   memo:   {label:'メモ', icon:ICON.memo, color:'var(--g-memo)'}
 };
+// 便色カード（母子健康手帳）に合わせた7段階。画面の色はあくまで目安
+const STOOL = [
+  [1, '#f3f1e1', '白っぽい'], [2, '#efe7b4', 'うすいクリーム色'], [3, '#e8d98a', 'うすい黄色'],
+  [4, '#dcb945', '黄色'], [5, '#c99a2e', '山吹色'], [6, '#97853a', '黄土色〜うすい緑'], [7, '#56602f', '緑']
+];
+const stoolOf = n => STOOL[Number(n) - 1] || null;
 const startOfDay = t => { const d = new Date(t); d.setHours(0,0,0,0); return d.getTime(); };
 const hm = t => { const d = new Date(t); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
 const toInput = t => { const d = new Date(t); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes()); };
@@ -366,7 +372,12 @@ function describe(e){
                     ? `ミルク${e.amount ? ' ' + e.amount + 'ml' : ''}`
                     : `母乳${e.amount ? ' ' + e.amount + '分' : ''}`;
     case 'sleep':  return e.end ? `寝た ${durTxt(e.end - e.t)}` : `睡眠中（${durTxt(Date.now() - e.t)}）`;
-    case 'diaper': return esc(e.sub || 'おむつ');
+    case 'diaper': {
+      const c = stoolOf(e.color);
+      return esc(e.sub || 'おむつ')
+        + (c ? ` <span class="sw" style="background:${c[1]}"></span>便色${c[0]}` : '')
+        + (e.stool ? `・${esc(e.stool)}` : '');
+    }
     case 'temp':   return `${esc(e.value)}℃`;
     case 'memo':   return esc(e.memo?.slice(0, 30) || 'メモ');
   }
@@ -472,7 +483,16 @@ function quickDiaper(){
   const ev = { id: uid(), type: 'diaper', t: Date.now(), sub: 'おしっこ' };
   putEvent(ev);
   buzz();
-  const change = sub => { putEvent({ ...ev, sub }); toast(`「${sub}」に変更しました ✓`); };
+  const change = sub => {
+    putEvent({ ...ev, sub });
+    const age = babyAge();
+    if(!age || age.days <= 135){
+      actionToast(`「${sub}」に変更しました。うんちの色も記録できます`, [
+        { label: '色を選ぶ', fn: () => editLater(ev.id) },
+        { label: '今はしない', fn: () => {} }
+      ]);
+    } else toast(`「${sub}」に変更しました ✓`);
+  };
   actionToast('おむつ（おしっこ）を記録しました', [
     { label: '取り消す', fn: undo(ev.id) },
     { label: 'うんちに変更', fn: () => change('うんち') },
@@ -507,18 +527,33 @@ document.addEventListener('click', e => {
   group.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
   F[group.dataset.k] = b.dataset.v;
   if(F.type === 'feed' && $('amtLabel')) $('amtLabel').firstChild.textContent = amtLabel();
+  if(F.type === 'diaper' && group.dataset.k === 'sub' && $('poopBox')) $('poopBox').hidden = F.sub === 'おしっこ';
 });
 
 function openForm(type, id){
   const ev = id ? S.events.find(x => x.id === id) : null;
   if(ev) type = ev.type;
   const e = ev || {};
-  F = {type, id: e.id || null, by: e.by || null, sub: e.sub || ({feed:'母乳', diaper:'おしっこ'}[type] || null)};
+  F = {type, id: e.id || null, by: e.by || null, sub: e.sub || ({feed:'母乳', diaper:'おしっこ'}[type] || null),
+       color: stoolOf(e.color) ? Number(e.color) : null, stool: e.stool || null};
 
   let h = `<h3 class="fh"><span class="fh-ic" style="background:${TYPES[type].color}">${TYPES[type].icon}</span>${TYPES[type].label}を${ev ? '編集' : '記録'}</h3>`;
   if(ev && whoName(ev.by)) h += `<p class="note">記録した人：${esc(whoName(ev.by))}</p>`;
   if(type === 'feed')   h += seg('sub', ['母乳','ミルク'], F.sub);
-  if(type === 'diaper') h += seg('sub', ['おしっこ','うんち','両方'], F.sub);
+  if(type === 'diaper'){
+    h += seg('sub', ['おしっこ','うんち','両方'], F.sub);
+    h += `<div id="poopBox" ${F.sub === 'おしっこ' ? 'hidden' : ''}>
+      <div class="lbl">うんちの色（便色カード）</div>
+      <div class="stool-colors">${STOOL.map(([n, c, l]) =>
+        `<button type="button" data-color="${n}" style="background:${c}" aria-label="${n}番 ${l}"><span>${n}</span></button>`).join('')}</div>
+      <div class="stool-scale"><span>← うすい（1〜3は受診の目安）</span><span>こい →</span></div>
+      <p class="stool-name" id="stoolName"></p>
+      <div class="stool-warn" id="stoolWarn" hidden>白っぽい・うすい黄色のうんち（1〜3番）は、胆道閉鎖症など肝臓の病気のサインのことがあります。<b>すぐに小児科を受診</b>してください。</div>
+      <p class="note small">画面の色は実物と違って見えることがあります。明るい場所で、母子手帳の便色カードと見比べてください。迷ったら小さい番号を選びます。</p>
+      <div class="lbl">うんちの状態（任意）</div>
+      ${seg('stool', ['かため','ふつう','やわらかい','水っぽい'], F.stool)}
+    </div>`;
+  }
   if(type === 'feed' || type === 'temp'){
     const v = type === 'temp' ? (e.value ?? '') : (e.amount ?? '');
     h += `<label id="amtLabel">${amtLabel()}<input id="f_amt" type="number" inputmode="decimal" step="any" value="${esc(v)}" placeholder="${type === 'temp' ? '36.5' : ''}"></label>`;
@@ -530,8 +565,34 @@ function openForm(type, id){
   h += `<div class="btns">${ev ? '<button class="danger" id="f_del">削除</button>' : ''}<button class="ghost" id="f_cancel">やめる</button><button class="primary" id="f_save">保存</button></div>`;
   openSheet(h);
   $('f_save').onclick = saveForm;
+  $('sheet').querySelectorAll('[data-color]').forEach(b => b.onclick = () => {
+    const n = Number(b.dataset.color);
+    F.color = F.color === n ? null : n;
+    updateStoolUI();
+  });
+  if(type === 'diaper') updateStoolUI();
   $('f_cancel').onclick = closeSheet;
   if($('f_del')) $('f_del').onclick = delEv;
+}
+function updateStoolUI(){
+  if(!$('stoolName')) return;
+  $('sheet').querySelectorAll('[data-color]').forEach(b => b.classList.toggle('on', Number(b.dataset.color) === F.color));
+  const c = stoolOf(F.color);
+  $('stoolName').textContent = c ? `${c[0]}番：${c[2]}（タップで選択を解除）` : '近い色をタップ（任意）';
+  $('stoolWarn').hidden = !(c && c[0] <= 3);
+}
+function showStoolAlert(n){
+  openSheet(`
+    <h3 class="fh"><span class="fh-ic alert-ic">!</span>うんちの色が便色カード${n}番に近いです</h3>
+    <p class="sa-text">白っぽい・うすい黄色のうんち（1〜3番）は、胆道閉鎖症など肝臓や胆道の病気のサインのことがあります。早く見つけて治療を始めることがとても大切です。</p>
+    <ul class="alert-list">
+      <li><b>すぐに小児科を受診</b>してください。夜間・休日で迷ったら #8000 へ。</li>
+      <li>受診のときは便色カードの番号を伝え、うんちのついたおむつを持っていくと確認してもらいやすいです。</li>
+      <li>白目や肌が黄色い、おしっこが濃い黄色、なども一緒に伝えてください。</li>
+    </ul>
+    <p class="note">照明の色で見え方が変わることがあります。明るい場所で母子手帳の便色カードと見比べてください。</p>
+    <div class="btns"><a class="primary btnlink" href="tel:%238000">#8000に電話</a><button class="ghost" id="sa_close">閉じる</button></div>`);
+  $('sa_close').onclick = closeSheet;
 }
 function openSheet(html){ hideAtoast(); $('sheet').innerHTML = html; $('ov').classList.add('show'); }
 function closeSheet(){ $('ov').classList.remove('show'); }
@@ -554,7 +615,13 @@ function saveForm(){
     const v = $('f_amt').value;
     if(v) ev.amount = +v;
   }
-  if(F.type === 'diaper') ev.sub = F.sub;
+  if(F.type === 'diaper'){
+    ev.sub = F.sub;
+    if(F.sub !== 'おしっこ'){
+      if(stoolOf(F.color)) ev.color = F.color;
+      if(F.stool) ev.stool = F.stool;
+    }
+  }
   if(F.type === 'temp'){
     const v = $('f_amt').value;
     if(!v){ toast('体温を入れてね'); return; }
@@ -565,7 +632,8 @@ function saveForm(){
 
   putEvent(ev);
   closeSheet();
-  toast('保存しました ✓');
+  if(ev.type === 'diaper' && ev.color && ev.color <= 3) showStoolAlert(ev.color);
+  else toast('保存しました ✓');
 }
 function delEv(){
   if(!F.id) return;
@@ -719,6 +787,27 @@ function buildAdvice(){
       add('info', `体温が少し高めです（${v}℃・${hm(lt.t)}）`,
         '赤ちゃんはもともと体温が高めで、着せすぎや室温、授乳や泣いた直後でも上がります。服や室温を調整して、30分ほどしてから測り直してみてください。');
     }
+  }
+
+  // うんちの色（便色カード1〜3番・直近7日）
+  const pale = S.events.filter(e => e.type === 'diaper' && stoolOf(e.color) && Number(e.color) <= 3 && e.t >= now - 7 * DAY);
+  if(pale.length){
+    const p = pale[pale.length - 1];
+    const d = new Date(p.t);
+    add('alert', `うんちの色が便色カード${p.color}番に近い記録があります（${d.getMonth() + 1}/${d.getDate()} ${hm(p.t)}）`,
+      '白っぽい・うすい黄色のうんちは、胆道閉鎖症など肝臓の病気のサインのことがあります。まだ受診していなければ、すぐに小児科を受診してください。番号を伝え、うんちのついたおむつを持っていくと確認してもらいやすいです。');
+  }
+
+  // 水っぽいうんち（24時間で3回以上）
+  const watery = S.events.filter(e => e.type === 'diaper' && e.stool === '水っぽい' && e.t >= now - DAY).length;
+  if(watery >= 3) add('warn', `水っぽいうんちが続いています（24時間で${watery}回）`,
+    '母乳・ミルクが飲めているか、おしっこが出ているかを見てください。おしっこが減る、ぐったりしている、吐く、うんちに血が混じる、熱があるなどのときは早めに小児科へ。');
+
+  // 生後4か月ごろまでは便色チェックのすすめ
+  if(age && age.days <= 135){
+    const recentPoops = S.events.filter(e => e.type === 'diaper' && (e.sub === 'うんち' || e.sub === '両方') && e.t >= now - 14 * DAY);
+    if(recentPoops.length && !recentPoops.some(e => stoolOf(e.color))) add('info', 'うんちの色もチェックしてみましょう',
+      '生後4か月ごろまでは、うんちの色を母子手帳の便色カードと見比べておくと安心です（特に生後2週・1か月・1〜4か月ごろ）。おむつの記録で「うんち」を選ぶと、色を選べます。');
   }
 
   // 直近3日間（今日を除く、記録がある日だけ）

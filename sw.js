@@ -1,6 +1,6 @@
 // オフラインでもアプリを開けるようにするための Service Worker
 // アプリを更新したら VERSION の数字を上げてください。
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = 'babylog-' + VERSION;
 const SHELL = ['./', './index.html', './app.js', './icons.js', './firebase-config.js', './manifest.webmanifest', './icon.svg', './icon-192.png'];
 
