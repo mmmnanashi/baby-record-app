@@ -1,6 +1,6 @@
 // オフラインでもアプリを開けるようにするための Service Worker
 // アプリを更新したら VERSION の数字を上げてください。
-const VERSION = 'v7';
+const VERSION = 'v8';
 const CACHE = 'babylog-' + VERSION;
 const SHELL = ['./', './index.html', './app.js', './icons.js', './firebase-config.js', './manifest.webmanifest', './icon.svg', './icon-192.png'];
 
@@ -23,7 +23,8 @@ self.addEventListener('fetch', e => {
   }
   // 自分のファイル：ネット優先（更新がすぐ反映）、つながらない時はキャッシュ
   if(url.origin === location.origin){
-    e.respondWith(fetch(req).then(res => {
+    // ブラウザのキャッシュを使わず、毎回サーバーに最新か確認する（更新がすぐ反映される）
+    e.respondWith(fetch(new Request(req.url, { cache: 'no-cache', credentials: 'same-origin' })).then(res => {
       const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); return res;
     }).catch(() => caches.match(req).then(hit => hit || caches.match('./index.html'))));
   }

@@ -1191,5 +1191,19 @@ setInterval(() => {
 }, 30000);
 
 if('serviceWorker' in navigator && location.protocol === 'https:'){
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
+  // 新しい版に切り替わったら自動で読み込み直す（入力中は「新しい版」の案内だけ）
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if(!hadController || reloading) return;
+    if($('ov').classList.contains('show')){ toast('新しい版があります。閉じて開き直すと反映されます'); return; }
+    reloading = true;
+    location.reload();
+  });
+  navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+    .then(reg => {
+      // アプリに戻ってきたときにも更新を確認
+      document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible') reg.update().catch(() => {}); });
+    })
+    .catch(() => {});
 }
