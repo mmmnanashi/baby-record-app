@@ -74,6 +74,22 @@ const STOOL = [
   [4, '#dcb945', '黄色'], [5, '#c99a2e', '山吹色'], [6, '#97853a', '黄土色〜うすい緑'], [7, '#56602f', '緑']
 ];
 const stoolOf = n => STOOL[Number(n) - 1] || null;
+const isMilk = e => e.type === 'feed' && e.sub === 'ミルク';
+const isBreast = e => e.type === 'feed' && e.sub !== 'ミルク';
+// 母乳とミルクを30分以内に続けてあげたときは「1回の授乳」としてまとめる
+function feedSessions(list){
+  const out = [];
+  list.filter(e => e.type === 'feed').forEach(e => {
+    if(out.length && e.t - out[out.length - 1].last <= 30 * MIN) out[out.length - 1].last = e.t;
+    else out.push({ t: e.t, last: e.t });
+  });
+  return out;
+}
+function avgGapOf(times){
+  const g = [];
+  for(let i = 1; i < times.length; i++){ const x = times[i] - times[i-1]; if(x < 8 * HOUR) g.push(x); }
+  return g.length ? { avg: g.reduce((a, b) => a + b, 0) / g.length, n: g.length } : null;
+}
 const startOfDay = t => { const d = new Date(t); d.setHours(0,0,0,0); return d.getTime(); };
 const hm = t => { const d = new Date(t); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
 const toInput = t => { const d = new Date(t); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes()); };
@@ -396,30 +412,40 @@ function renderToday(){
   const diapers = list.filter(e => e.type === 'diaper');
   const pee = diapers.filter(e => e.sub === 'おしっこ' || e.sub === '両方').length;
   const poop = diapers.filter(e => e.sub === 'うんち' || e.sub === '両方').length;
-  const allFeeds = S.events.filter(e => e.type === 'feed');
-  const lastFeed = allFeeds[allFeeds.length - 1];
+  const milks = S.events.filter(isMilk), breasts = S.events.filter(isBreast);
+  const lastMilk = milks[milks.length - 1], lastBreast = breasts[breasts.length - 1];
+  const todayMilk = feeds.filter(isMilk).length, todayBreast = feeds.length - todayMilk;
   const ongoing = S.events.find(e => e.type === 'sleep' && !e.end);
 
   $('v-today').innerHTML = `
     ${ongoing ? `<div class="banner"><div class="bn-ic">${ICON.sleep}<span>すやすや睡眠中</span></div><small>${hm(ongoing.t)} から ・ 経過 ${durTxt(Date.now() - ongoing.t)}</small></div>` : ''}
     <div class="act-grid">
-      <button class="act" style="background:var(--g-feed)" data-act="feed"><b>${ICON.feed}</b>授乳<small>${esc(feedCaption(lastFeed))}</small></button>
-      <button class="act" style="background:var(--g-sleep)" data-act="sleep"><b>${ongoing ? ICON.wake : ICON.sleep}</b>${ongoing ? '起きた' : '寝た'}<small>すぐ記録</small></button>
-      <button class="act" style="background:var(--g-diaper)" data-act="diaper"><b>${ICON.diaper}</b>おむつ<small>おしっこ</small></button>
-      <button class="act" style="background:var(--g-temp)" data-act="temp"><b>${ICON.temp}</b>体温<small>入力</small></button>
-      <button class="act" style="background:var(--g-memo)" data-act="memo"><b>${ICON.memo}</b>メモ<small>入力</small></button>
+      <button class="act" style="background:var(--g-breast)" data-act="breast"><b>${ICON.breast}</b><span class="al">母乳<small>${lastBreast?.amount ? lastBreast.amount + '分' : 'すぐ記録'}</small></span></button>
+      <button class="act" style="background:var(--g-feed)" data-act="milk"><b>${ICON.feed}</b><span class="al">ミルク<small>${lastMilk?.amount ? lastMilk.amount + 'ml' : 'すぐ記録'}</small></span></button>
+      <button class="act" style="background:var(--g-sleep)" data-act="sleep"><b>${ongoing ? ICON.wake : ICON.sleep}</b><span class="al">${ongoing ? '起きた' : '寝た'}<small>すぐ記録</small></span></button>
+      <button class="act" style="background:var(--g-diaper)" data-act="diaper"><b>${ICON.diaper}</b><span class="al">おむつ<small>おしっこ</small></span></button>
+      <button class="act" style="background:var(--g-temp)" data-act="temp"><b>${ICON.temp}</b><span class="al">体温<small>入力</small></span></button>
+      <button class="act" style="background:var(--g-memo)" data-act="memo"><b>${ICON.memo}</b><span class="al">メモ<small>入力</small></span></button>
     </div>
-    <p class="act-hint">タップですぐ記録 ・ 授乳とおむつは<b>長押し</b>で詳しく入力</p>
+    <p class="act-hint">タップですぐ記録 ・ 母乳・ミルク・おむつは<b>長押し</b>で詳しく入力</p>
     <div class="stats">
-      <div class="stat"><div class="k">今日の授乳</div><div class="v">${feeds.length}<small>回</small></div><div class="d">ミルク合計 ${milk}ml</div></div>
+      <div class="stat"><div class="k">今日の授乳</div><div class="v">${feedSessions(list).length}<small>回</small></div><div class="d">ミルク${todayMilk}回 ${milk}ml ・ 母乳${todayBreast}回</div></div>
       <div class="stat"><div class="k">今日の睡眠</div><div class="v">${durTxt(sleepMs)}</div><div class="d">${sleeps.length}回</div></div>
       <div class="stat"><div class="k">今日のおむつ</div><div class="v">${diapers.length}<small>回</small></div><div class="d">おしっこ ${pee} ・ うんち ${poop}</div></div>
-      <div class="stat"><div class="k">前回の授乳から</div><div class="v">${lastFeed ? durTxt(Date.now() - lastFeed.t) : '—'}</div><div class="d">${lastFeed ? hm(lastFeed.t) + ' ' + describe(lastFeed) : 'まだ記録なし'}</div></div>
+      <div class="stat"><div class="k">前回から</div>
+        ${sinceRow('ミルク', lastMilk, 'milk', 'ml')}
+        ${sinceRow('母乳', lastBreast, 'breast', '分')}
+      </div>
     </div>
     <div class="card"><h3>今日のタイムライン</h3>${timelineHTML(list)}</div>
   `;
   $('v-today').querySelectorAll('[data-act]').forEach(bindActButton);
   $('v-today').querySelectorAll('[data-ev]').forEach(li => li.onclick = () => openForm(null, li.dataset.ev));
+}
+function sinceRow(label, e, cls, unit){
+  return `<div class="since"><span class="tag tag-${cls}">${label}</span>`
+    + (e ? `<b>${durTxt(Date.now() - e.t)}</b><small>${hm(e.t)}${e.amount ? ' ・ ' + esc(e.amount) + unit : ''}</small>` : '<b class="none">—</b>')
+    + '</div>';
 }
 function timelineHTML(list){
   if(!list.length) return '<div class="empty">まだ記録がありません。上のボタンから記録してね</div>';
@@ -429,7 +455,7 @@ function timelineHTML(list){
     return `
     <li data-ev="${esc(e.id)}">
       <span class="time">${hm(e.t)}</span>
-      <span class="dot" style="background:${TYPES[e.type].color}">${TYPES[e.type].icon}</span>
+      <span class="dot" style="background:${isBreast(e) ? 'var(--g-breast)' : TYPES[e.type].color}">${isBreast(e) ? ICON.breast : TYPES[e.type].icon}</span>
       <span class="txt">${describe(e)}<small>${sub}${who ? ` ・ <span class="who">${esc(who)}</span>` : ''}</small></span>
     </li>`;
   }).join('') + '</ul>';
@@ -437,14 +463,15 @@ function timelineHTML(list){
 // ボタン：タップで即記録、授乳とおむつは長押しで入力画面
 function bindActButton(b){
   const t = b.dataset.act;
-  const quick = t === 'feed' || t === 'diaper';
+  const quick = t === 'breast' || t === 'milk' || t === 'diaper';
+  const longOpen = () => t === 'diaper' ? openForm('diaper') : openForm('feed', null, { sub: t === 'milk' ? 'ミルク' : '母乳' });
   let timer = null, long = false;
   if(quick){
     const cancel = () => { clearTimeout(timer); timer = null; b.classList.remove('pressing'); };
     b.addEventListener('pointerdown', () => {
       long = false;
       b.classList.add('pressing');
-      timer = setTimeout(() => { long = true; cancel(); buzz(40); openForm(t); }, 550);
+      timer = setTimeout(() => { long = true; cancel(); buzz(40); longOpen(); }, 550);
     });
     ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => b.addEventListener(ev, cancel));
     b.addEventListener('contextmenu', e => e.preventDefault());
@@ -452,14 +479,11 @@ function bindActButton(b){
   b.onclick = () => {
     if(long){ long = false; return; }
     if(t === 'sleep') quickSleep();
-    else if(t === 'feed') quickFeed();
+    else if(t === 'milk') quickFeed('ミルク');
+    else if(t === 'breast') quickFeed('母乳');
     else if(t === 'diaper') quickDiaper();
     else openForm(t);
   };
-}
-function feedCaption(last){
-  if(!last || last.sub !== 'ミルク') return '母乳' + (last?.amount ? last.amount + '分' : '');
-  return 'ミルク' + (last.amount ? last.amount : '');
 }
 function editLater(id){
   if(S.events.find(x => x.id === id)) openForm(null, id);
@@ -467,14 +491,14 @@ function editLater(id){
 }
 const undo = id => () => { removeEvent(id); toast('取り消しました'); };
 
-function quickFeed(){
-  const feeds = S.events.filter(e => e.type === 'feed');
-  const last = feeds[feeds.length - 1];
-  const ev = { id: uid(), type: 'feed', t: Date.now(), sub: last?.sub === 'ミルク' ? 'ミルク' : '母乳' };
+function quickFeed(sub){
+  const same = S.events.filter(sub === 'ミルク' ? isMilk : isBreast);
+  const last = same[same.length - 1];
+  const ev = { id: uid(), type: 'feed', t: Date.now(), sub };
   if(last?.amount) ev.amount = last.amount;
   putEvent(ev);
   buzz();
-  actionToast(`授乳を記録しました（${describe(ev)}）`, [
+  actionToast(`${describe(ev)}を記録しました`, [
     { label: '取り消す', fn: undo(ev.id) },
     { label: '編集する', fn: () => editLater(ev.id) }
   ]);
@@ -530,11 +554,11 @@ document.addEventListener('click', e => {
   if(F.type === 'diaper' && group.dataset.k === 'sub' && $('poopBox')) $('poopBox').hidden = F.sub === 'おしっこ';
 });
 
-function openForm(type, id){
+function openForm(type, id, preset = {}){
   const ev = id ? S.events.find(x => x.id === id) : null;
   if(ev) type = ev.type;
   const e = ev || {};
-  F = {type, id: e.id || null, by: e.by || null, sub: e.sub || ({feed:'母乳', diaper:'おしっこ'}[type] || null),
+  F = {type, id: e.id || null, by: e.by || null, sub: e.sub || preset.sub || ({feed:'母乳', diaper:'おしっこ'}[type] || null),
        color: stoolOf(e.color) ? Number(e.color) : null, stool: e.stool || null};
 
   let h = `<h3 class="fh"><span class="fh-ic" style="background:${TYPES[type].color}">${TYPES[type].icon}</span>${TYPES[type].label}を${ev ? '編集' : '記録'}</h3>`;
@@ -656,7 +680,7 @@ function renderStats(){
     const feeds = L.filter(e => e.type === 'feed');
     return {
       s, label: lbl(s), L,
-      feeds: feeds.length,
+      feeds: feedSessions(L).length,
       ml: feeds.filter(e => e.sub === 'ミルク').reduce((a,e) => a + (e.amount || 0), 0),
       sleep: L.filter(e => e.type === 'sleep').reduce((a,e) => a + sleepDur(e), 0) / HOUR,
       diaper: L.filter(e => e.type === 'diaper').length
@@ -666,9 +690,13 @@ function renderStats(){
   const start = rows[0].s;
   const n = rows.length;
   const sumOf = k => rows.reduce((a,r) => a + r[k], 0);
-  const feedTimes = S.events.filter(e => e.type === 'feed' && e.t >= start).map(e => e.t);
-  const gaps = []; for(let i = 1; i < feedTimes.length; i++) gaps.push(feedTimes[i] - feedTimes[i-1]);
-  const avgGap = gaps.length ? gaps.reduce((a,b) => a + b, 0) / gaps.length : 0;
+  const inRange = S.events.filter(e => e.t >= start);
+  const gMilk = avgGapOf(inRange.filter(isMilk).map(e => e.t));
+  const gBreast = avgGapOf(inRange.filter(isBreast).map(e => e.t));
+  const nMilk = inRange.filter(isMilk).length, nBreast = inRange.filter(isBreast).length;
+  const gapCard = (gMilk || !gBreast)
+    ? `<div class="stat"><div class="k">ミルクの平均間隔</div><div class="v">${gMilk ? durTxt(gMilk.avg) : '—'}</div><div class="d">${gBreast ? '母乳 ' + durTxt(gBreast.avg) : (gMilk ? gMilk.n + 1 + '回のミルクから' : '記録が2回以上で表示')}</div></div>`
+    : `<div class="stat"><div class="k">母乳の平均間隔</div><div class="v">${durTxt(gBreast.avg)}</div><div class="d">${gBreast.n + 1}回の母乳から</div></div>`;
   const sleeps = S.events.filter(e => e.type === 'sleep' && e.t >= start);
   const longest = sleeps.length ? Math.max(...sleeps.map(sleepDur)) : 0;
 
@@ -678,7 +706,7 @@ function renderStats(){
       const a = Math.max(e.t, s), b = Math.min(e.end ?? Date.now(), s + DAY);
       return `<div class="s" style="left:${(a-s)/DAY*100}%;width:${(b-a)/DAY*100}%"></div>`;
     }).join('');
-    const fd = r.L.filter(e => e.type === 'feed').map(e => `<div class="f" style="left:${(e.t-s)/DAY*100}%"></div>`).join('');
+    const fd = r.L.filter(e => e.type === 'feed').map(e => `<div class="f${isBreast(e) ? ' fb' : ''}" style="left:${(e.t-s)/DAY*100}%"></div>`).join('');
     return `<div class="rail-row"><span class="d">${r.label}</span><div class="rail">${segs}${fd}</div></div>`;
   };
 
@@ -686,8 +714,8 @@ function renderStats(){
     ${adviceHTML()}
     <div class="range">${[7,14,30].map(n => `<button class="${n === rangeDays ? 'on' : ''}" data-range="${n}">${n}日間</button>`).join('')}</div>
     <div class="stats">
-      <div class="stat"><div class="k">1日あたりの授乳</div><div class="v">${(sumOf('feeds')/n).toFixed(1)}<small>回</small></div><div class="d">期間合計 ${sumOf('feeds')}回</div></div>
-      <div class="stat"><div class="k">授乳の平均間隔</div><div class="v">${gaps.length ? durTxt(avgGap) : '—'}</div><div class="d">${gaps.length ? gaps.length + 1 + '回の授乳から算出' : '記録が2回以上で表示'}</div></div>
+      <div class="stat"><div class="k">1日あたりの授乳</div><div class="v">${(sumOf('feeds')/n).toFixed(1)}<small>回</small></div><div class="d">母乳とミルクを続けたら1回</div></div>
+      ${gapCard}
       <div class="stat"><div class="k">1日あたりの睡眠</div><div class="v">${durTxt(sumOf('sleep')/n*HOUR)}</div><div class="d">期間の平均</div></div>
       <div class="stat"><div class="k">最長の睡眠</div><div class="v">${longest ? durTxt(longest) : '—'}</div><div class="d">期間中の1回あたり</div></div>
     </div>
@@ -699,7 +727,7 @@ function renderStats(){
       <h3>1日の流れ</h3>
       <div class="rail-row"><span class="d"></span><div class="axis"><span>0時</span><span>6時</span><span>12時</span><span>18時</span><span>24時</span></div></div>
       ${[...rows].reverse().map(railHTML).join('')}
-      <div class="legend"><span><i style="background:var(--sleep)"></i>睡眠</span><span><i style="background:var(--feed)"></i>授乳</span></div>
+      <div class="legend"><span><i style="background:var(--sleep)"></i>睡眠</span><span><i style="background:var(--feed)"></i>ミルク</span><span><i style="background:var(--breast)"></i>母乳</span></div>
     </div>
   `;
   $('v-stats').querySelectorAll('[data-range]').forEach(b => b.onclick = () => { rangeDays = +b.dataset.range; render(); });
@@ -738,18 +766,19 @@ function dayStats(s){
   const sl = L.filter(e => e.type === 'sleep');
   return {
     any: L.length > 0,
-    feeds: L.filter(e => e.type === 'feed').length,
+    feeds: feedSessions(L).length,
     diapers: d.length,
     wet: d.filter(e => e.sub === 'おしっこ' || e.sub === '両方').length,
     sleepN: sl.length,
     sleepH: sl.reduce((a, e) => a + sleepDur(e), 0) / HOUR
   };
 }
-function avgFeedGap(from, to){
-  const ts = S.events.filter(e => e.type === 'feed' && e.t >= from && e.t < to).map(e => e.t);
-  const g = [];
-  for(let i = 1; i < ts.length; i++){ const x = ts[i] - ts[i-1]; if(x < 8 * HOUR) g.push(x); }
-  return g.length >= 5 ? g.reduce((a, b) => a + b, 0) / g.length : null;
+// ミルクの記録が十分あればミルクの間隔、なければ「1回の授乳」どうしの間隔
+function avgFeedGap(from, to, kind){
+  const L = S.events.filter(e => e.t >= from && e.t < to);
+  const times = kind === 'milk' ? L.filter(isMilk).map(e => e.t) : feedSessions(L).map(x => x.t);
+  const g = avgGapOf(times);
+  return g && g.n >= 5 ? g.avg : null;
 }
 function longestSleep(from, to){
   const L = S.events.filter(e => e.type === 'sleep' && e.end && e.t >= from && e.t < to);
@@ -821,24 +850,28 @@ function buildAdvice(){
 
   // 授乳回数（生後2か月ごろまで）
   const dsF = ds.filter(x => x.feeds > 0);
+  const mixNote = S.events.some(isMilk) && S.events.some(isBreast) ? '（母乳とミルクを30分以内に続けてあげたときは1回と数えています）' : '';
   if(dsF.length && age && age.days < 60){
     const a = avgOf(dsF, 'feeds');
     if(a < 7) add('warn', `授乳回数が少なめです（1日平均${f1(a)}回）`,
       '記録漏れがなければ、生後2か月ごろまでは1日8〜12回くらいが目安です。おしっこの回数や体重の増えも合わせて見て、少ない日が続くときは小児科や助産師に相談してください。');
     else if(a < 8) add('info', `授乳回数はやや少なめです（1日平均${f1(a)}回）`,
-      '目安は1日8〜12回くらいです。おしっこがしっかり出ていれば、飲めているサインです。');
+      '目安は1日8〜12回くらいです。おしっこがしっかり出ていれば、飲めているサインです。' + mixNote);
     else if(a <= 12) add('good', `授乳回数は目安の範囲です（1日平均${f1(a)}回）`,
-      '生後2か月ごろまでの目安（1日8〜12回）に入っています。');
+      '生後2か月ごろまでの目安（1日8〜12回）に入っています。' + mixNote);
     else add('info', `授乳回数が多めです（1日平均${f1(a)}回）`,
       '急によく飲みたがる時期や、1回に飲む量が少ないときは回数が増えることがあります。おしっこが出て機嫌がよければ、心配しすぎなくて大丈夫です。');
   }
 
   // 授乳間隔の変化（直近7日 と その前の7日）
-  const g1 = avgFeedGap(today - 6 * DAY, now), g0 = avgFeedGap(today - 13 * DAY, today - 6 * DAY);
+  let kind = 'milk';
+  let g1 = avgFeedGap(today - 6 * DAY, now, kind), g0 = avgFeedGap(today - 13 * DAY, today - 6 * DAY, kind);
+  if(!(g1 && g0)){ kind = 'all'; g1 = avgFeedGap(today - 6 * DAY, now, kind); g0 = avgFeedGap(today - 13 * DAY, today - 6 * DAY, kind); }
+  const gname = kind === 'milk' ? 'ミルク' : '授乳';
   if(g1 && g0){
-    if(g1 - g0 >= 15 * MIN) add('good', `授乳の間隔がのびてきました（${durTxt(g0)} → ${durTxt(g1)}）`,
+    if(g1 - g0 >= 15 * MIN) add('good', `${gname}の間隔がのびてきました（${durTxt(g0)} → ${durTxt(g1)}）`,
       '1回にしっかり飲めるようになってきたサインです。');
-    else if(g0 - g1 >= 30 * MIN) add('info', `授乳の間隔が短くなっています（${durTxt(g0)} → ${durTxt(g1)}）`,
+    else if(g0 - g1 >= 30 * MIN) add('info', `${gname}の間隔が短くなっています（${durTxt(g0)} → ${durTxt(g1)}）`,
       '急によく飲みたがる時期かもしれません。数日で落ち着くことが多いです。おしっこが減る、機嫌が悪い日が続くときは相談してください。');
   }
 
