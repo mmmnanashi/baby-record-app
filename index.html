@@ -298,6 +298,27 @@ button.banner:active{transform:scale(.98)}
 .bn-wake{display:flex;align-items:center;gap:6px;background:#fff;color:#5a6fc0;border-radius:16px;padding:6px 12px 6px 6px;font-size:12px;font-weight:800;line-height:1.25;flex-shrink:0;box-shadow:0 3px 8px -3px rgba(0,0,0,.25)}
 .bn-wake .ic{width:34px;height:34px;flex-shrink:0}
 [data-theme="night"] .bn-wake{background:#eee3d8;color:#4a55a0}
+
+/* 1日の記録 */
+button.rail-row{width:100%;border:0;background:none;padding:3px 4px;margin:2px -4px;border-radius:10px;font-family:inherit;color:inherit;cursor:pointer;width:calc(100% + 8px)}
+button.rail-row:active{background:var(--bg)}
+.rail-row .go{width:12px;color:var(--sub);font-size:15px;text-align:center;flex-shrink:0}
+.rail-row .d{text-align:left}
+.col[data-day]{cursor:pointer}
+.day-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.day-head h3{flex:1;text-align:center;margin:0;font-size:18px;color:var(--ink)}
+.day-head h3 small{margin-left:6px;font-size:11px;background:var(--bg);color:#ff6b8b;border-radius:999px;padding:2px 8px;vertical-align:2px}
+.day-nav{width:40px;height:40px;border-radius:50%;border:0;background:var(--bg);color:var(--ink);font-size:22px;line-height:1;cursor:pointer;font-family:inherit}
+.day-nav:disabled{opacity:.3}
+.day-sum{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.day-sum div{background:var(--bg);border-radius:14px;padding:8px 10px}
+.day-sum span{display:block;font-size:11px;color:var(--sub)}
+.day-sum b{font-size:17px}
+.day-sum small{display:block;font-size:10.5px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rail.big{height:26px;border-radius:8px;margin-bottom:4px}
+.rail.big .f{top:5px;height:16px}
+.day-tl{margin-top:4px}
+.day-tl .tl li{padding:8px 0}
 </style>
 </head>
 <body data-screen="loading">

@@ -524,9 +524,9 @@ function sinceRow(label, e, cls, unit){
     + (e ? `<b>${durTxt(Date.now() - e.t)}</b><small>${hm(e.t)}${e.amount ? ' ・ ' + esc(e.amount) + unit : ''}${e.side ? ' ・ ' + esc(e.side) : ''}</small>` : '<b class="none">—</b>')
     + '</div>';
 }
-function timelineHTML(list){
+function timelineHTML(list, asc = false){
   if(!list.length) return '<div class="empty">まだ記録がありません。上のボタンから記録してね</div>';
-  return '<ul class="tl">' + [...list].reverse().map(e => {
+  return '<ul class="tl">' + (asc ? [...list] : [...list].reverse()).map(e => {
     const who = whoName(e.by);
     const sub = e.memo ? esc(e.memo) : TYPES[e.type].label;
     return `
@@ -644,11 +644,12 @@ document.addEventListener('click', e => {
 });
 
 function openForm(type, id, preset = {}){
+  const returnDay = preset.returnDay || null;
   const ev = id ? S.events.find(x => x.id === id) : null;
   if(ev) type = ev.type;
   const e = ev || {};
   F = {type, id: e.id || null, by: e.by || null, sub: e.sub || preset.sub || ({feed:'母乳', diaper:'おしっこ'}[type] || null),
-       color: stoolOf(e.color) ? Number(e.color) : null, stool: e.stool || null, side: e.side || null};
+       color: stoolOf(e.color) ? Number(e.color) : null, stool: e.stool || null, side: e.side || null, returnDay};
 
   let h = `<h3 class="fh"><span class="fh-ic" style="background:${TYPES[type].color}">${TYPES[type].icon}</span>${TYPES[type].label}を${ev ? '編集' : '記録'}</h3>`;
   if(ev && whoName(ev.by)) h += `<p class="note">記録した人：${esc(whoName(ev.by))}</p>`;
@@ -687,7 +688,7 @@ function openForm(type, id, preset = {}){
     updateStoolUI();
   });
   if(type === 'diaper') updateStoolUI();
-  $('f_cancel').onclick = closeSheet;
+  $('f_cancel').onclick = () => returnDay ? openDay(returnDay) : closeSheet();
   if($('f_del')) $('f_del').onclick = delEv;
 }
 function updateStoolUI(){
@@ -747,17 +748,75 @@ function saveForm(){
   if(F.type === 'memo' && !note){ toast('内容を入れてね'); return; }
   if(note) ev.memo = note;
 
+  const rd = F.returnDay;
   putEvent(ev);
   closeSheet();
   if(ev.type === 'diaper' && ev.color && ev.color <= 3) showStoolAlert(ev.color);
-  else toast('保存しました ✓');
+  else {
+    toast('保存しました ✓');
+    if(rd) setTimeout(() => openDay(rd), 120);
+  }
 }
 function delEv(){
   if(!F.id) return;
   if(!confirm('この記録を削除しますか？（家族全員の画面から消えます）')) return;
+  const rd = F.returnDay;
   removeEvent(F.id);
   closeSheet();
   toast('削除しました');
+  if(rd) setTimeout(() => openDay(rd), 120);
+}
+
+/* ---------- 1日の記録をくわしく見る ---------- */
+const WD = ['日', '月', '火', '水', '木', '金', '土'];
+function dayRailInner(s){
+  const segs = S.events.filter(e => e.type === 'sleep' && (e.end ?? Date.now()) > s && e.t < s + DAY).map(e => {
+    const a = Math.max(e.t, s), b = Math.min(e.end ?? Date.now(), s + DAY);
+    return `<div class="s" style="left:${(a-s)/DAY*100}%;width:${(b-a)/DAY*100}%"></div>`;
+  }).join('');
+  const fd = S.events.filter(e => e.type === 'feed' && e.t >= s && e.t < s + DAY)
+    .map(e => `<div class="f${isBreast(e) ? ' fb' : ''}" style="left:${(e.t-s)/DAY*100}%"></div>`).join('');
+  return segs + fd;
+}
+function openDay(s){
+  const today = startOfDay(Date.now());
+  const minDay = startOfDay(today - 30 * DAY);
+  const L = S.events.filter(e => e.t >= s && e.t < s + DAY);
+  const feeds = L.filter(e => e.type === 'feed');
+  const milkN = feeds.filter(isMilk).length;
+  const milkMl = feeds.filter(isMilk).reduce((a, e) => a + (e.amount || 0), 0);
+  const sleeps = L.filter(e => e.type === 'sleep');
+  const sleepMs = sleeps.reduce((a, e) => a + sleepDur(e), 0);
+  const diapers = L.filter(e => e.type === 'diaper');
+  const pee = diapers.filter(e => e.sub === 'おしっこ' || e.sub === '両方').length;
+  const poop = diapers.filter(isPoop).length;
+  const temps = L.filter(e => e.type === 'temp' && typeof e.value === 'number');
+  const maxT = temps.length ? Math.max(...temps.map(e => e.value)) : null;
+  const d = new Date(s);
+  const title = `${d.getMonth() + 1}/${d.getDate()}（${WD[d.getDay()]}）`;
+  openSheet(`
+    <div class="day-head">
+      <button class="day-nav" id="d_prev" ${s <= minDay ? 'disabled' : ''} aria-label="前の日">‹</button>
+      <h3>${title}${s === today ? '<small>今日</small>' : ''}</h3>
+      <button class="day-nav" id="d_next" ${s >= today ? 'disabled' : ''} aria-label="次の日">›</button>
+    </div>
+    <div class="day-sum">
+      <div><span>授乳</span><b>${feedSessions(L).length}回</b><small>ミルク${milkN}回 ${milkMl}ml ・ 母乳${feeds.length - milkN}回</small></div>
+      <div><span>睡眠</span><b>${durTxt(sleepMs)}</b><small>${sleeps.length}回</small></div>
+      <div><span>おむつ</span><b>${diapers.length}回</b><small>おしっこ${pee} ・ うんち${poop}</small></div>
+      <div><span>体温</span><b>${maxT !== null ? esc(maxT) + '℃' : '—'}</b><small>${temps.length ? '最高 ・ ' + temps.length + '回測定' : '測定なし'}</small></div>
+    </div>
+    <div class="rail-row"><div class="axis"><span>0時</span><span>6時</span><span>12時</span><span>18時</span><span>24時</span></div></div>
+    <div class="rail big">${dayRailInner(s)}</div>
+    <div class="lbl">この日の記録（${L.length}件）</div>
+    <div class="day-tl">${L.length ? timelineHTML(L, true) : '<div class="empty">この日の記録はありません</div>'}</div>
+    <p class="note small">記録をタップすると、修正・削除できます</p>
+    <div class="btns"><button class="ghost" id="d_close">閉じる</button></div>`);
+  $('sheet').scrollTop = 0;
+  $('d_close').onclick = closeSheet;
+  if(s > minDay) $('d_prev').onclick = () => { const p = new Date(s); p.setDate(p.getDate() - 1); openDay(startOfDay(p.getTime())); };
+  if(s < today) $('d_next').onclick = () => { const n = new Date(s); n.setDate(n.getDate() + 1); openDay(startOfDay(n.getTime())); };
+  $('sheet').querySelectorAll('[data-ev]').forEach(li => li.onclick = () => openForm(null, li.dataset.ev, { returnDay: s }));
 }
 
 /* ---------- 分析 ---------- */
@@ -794,15 +853,7 @@ function renderStats(){
   const sleeps = S.events.filter(e => e.type === 'sleep' && e.t >= start);
   const longest = sleeps.length ? Math.max(...sleeps.map(sleepDur)) : 0;
 
-  const railHTML = r => {
-    const s = r.s;
-    const segs = S.events.filter(e => e.type === 'sleep' && (e.end ?? Date.now()) > s && e.t < s + DAY).map(e => {
-      const a = Math.max(e.t, s), b = Math.min(e.end ?? Date.now(), s + DAY);
-      return `<div class="s" style="left:${(a-s)/DAY*100}%;width:${(b-a)/DAY*100}%"></div>`;
-    }).join('');
-    const fd = r.L.filter(e => e.type === 'feed').map(e => `<div class="f${isBreast(e) ? ' fb' : ''}" style="left:${(e.t-s)/DAY*100}%"></div>`).join('');
-    return `<div class="rail-row"><span class="d">${r.label}</span><div class="rail">${segs}${fd}</div></div>`;
-  };
+  const railHTML = r => `<button class="rail-row day-link" data-day="${r.s}"><span class="d">${r.label}</span><div class="rail">${dayRailInner(r.s)}</div><span class="go">›</span></button>`;
 
   $('v-stats').innerHTML = `
     ${adviceHTML()}
@@ -821,12 +872,14 @@ function renderStats(){
     ${stoolColorHTML(start)}
     <div class="card">
       <h3>1日の流れ</h3>
-      <div class="rail-row"><span class="d"></span><div class="axis"><span>0時</span><span>6時</span><span>12時</span><span>18時</span><span>24時</span></div></div>
+      <p class="note small">日付をタップすると、その日の記録をくわしく見られます</p>
+      <div class="rail-row"><span class="d"></span><div class="axis"><span>0時</span><span>6時</span><span>12時</span><span>18時</span><span>24時</span></div><span class="go"></span></div>
       ${[...rows].reverse().map(railHTML).join('')}
       <div class="legend"><span><i style="background:var(--sleep)"></i>睡眠</span><span><i style="background:var(--feed)"></i>ミルク</span><span><i style="background:var(--breast)"></i>母乳</span></div>
     </div>
   `;
   $('v-stats').querySelectorAll('[data-range]').forEach(b => b.onclick = () => { rangeDays = +b.dataset.range; render(); });
+  $('v-stats').querySelectorAll('[data-day]').forEach(b => b.onclick = () => openDay(+b.dataset.day));
 }
 // うんちの色と状態の内訳（選んだ期間）
 function stoolColorHTML(start){
@@ -863,7 +916,7 @@ function barsHTML(icon, title, rows, key, color, fmt){
   const max = Math.max(1, ...rows.map(r => r[key]));
   return `<div class="card"><h3 class="h-ic"><span>${icon}</span>${title}</h3><div class="bars">${rows.map(r => {
     const v = r[key];
-    return `<div class="col">
+    return `<div class="col" data-day="${r.s}">
       <div class="val">${v ? fmt(v) : ''}</div>
       <div class="plot"><div class="bar" style="height:${v / max * 100}%;background:${color}"></div></div>
       <div class="lb">${r.label}</div>
