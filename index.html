@@ -366,6 +366,25 @@ button.rail-row:active{background:var(--bg)}
 .sw-row input{width:22px;height:22px;accent-color:#ff6b8b;flex-shrink:0}
 [data-theme="night"] .alarm-ic .ic{background:#eee3d8}
 [data-theme="night"] .alarm-main{box-shadow:none}
+
+/* 母乳タイマー */
+.bt-total{text-align:center;font-size:46px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:.02em;margin:4px 0 0;color:var(--ink)}
+.note.center{text-align:center;margin-bottom:12px}
+.bt-sides{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.bt-side{display:flex;flex-direction:column;align-items:center;gap:2px;border:3px solid transparent;background:var(--bg);border-radius:26px;padding:18px 6px 14px;cursor:pointer;font-family:inherit;color:var(--ink);transition:transform .15s;-webkit-user-select:none;user-select:none;touch-action:manipulation}
+.bt-side:active{transform:scale(.97)}
+.bt-side.sug{border-color:#ffc2b4;border-style:dashed}
+.bt-side.run{background:var(--g-breast);color:#fff;border-color:transparent;box-shadow:0 10px 20px -10px rgba(255,120,120,.7);animation:btpulse 1.6s ease-in-out infinite}
+@keyframes btpulse{0%,100%{box-shadow:0 10px 20px -10px rgba(255,120,120,.7)}50%{box-shadow:0 0 0 8px rgba(255,143,143,.18)}}
+.bt-l{font-size:22px;font-weight:800}
+.bt-t{font-size:30px;font-weight:800;font-variant-numeric:tabular-nums}
+.bt-side small{font-size:11px;opacity:.85}
+.bt-banner{background:var(--g-breast)!important}
+.bt-clock{font-size:17px;font-variant-numeric:tabular-nums;color:#e0605f;padding:8px 14px}
+[data-theme="night"] .bt-clock{color:#b5625f}
+[data-theme="night"] .bt-side.run{box-shadow:none;animation:none}
+
+[hidden]{display:none!important}
 </style>
 </head>
 <body data-screen="loading">

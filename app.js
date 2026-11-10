@@ -512,7 +512,7 @@ function describe(e){
   switch(e.type){
     case 'feed':   return e.sub === 'ミルク'
                     ? `ミルク${e.amount ? ' ' + e.amount + 'ml' : ''}`
-                    : `母乳${e.amount ? ' ' + esc(e.amount) + '分' : ''}${e.side ? '（' + esc(e.side) + '）' : ''}`;
+                    : `母乳${e.amount ? ' ' + esc(e.amount) + '分' : ''}${breastDetail(e)}`;
     case 'sleep':  return e.end ? `寝た ${durTxt(e.end - e.t)}` : `睡眠中（${durTxt(Date.now() - e.t)}）`;
     case 'diaper': {
       const c = stoolOf(e.color);
@@ -544,19 +544,20 @@ function renderToday(){
   const ongoing = S.events.find(e => e.type === 'sleep' && !e.end);
 
   $('v-today').innerHTML = `
+    ${btLoad() ? `<button class="banner bt-banner" id="btBanner">${btBannerInner(btLoad())}</button>` : ''}
     ${ongoing ? `<button class="banner" id="wakeBanner">
       <span class="bn-main"><span class="bn-ic">${ICON.sleep}<span>すやすや睡眠中</span></span><small>${hm(ongoing.t)} から ・ 経過 ${durTxt(Date.now() - ongoing.t)}</small></span>
       <span class="bn-wake">${ICON.wake}<span>タップで<br>起きた</span></span>
     </button>` : ''}
     <div class="act-grid">
-      <button class="act" style="background:var(--g-breast)" data-act="breast"><b>${ICON.breast}</b><span class="al">母乳<small>${esc([lastBreast?.amount ? lastBreast.amount + '分' : '', lastBreast?.side ? '前回' + lastBreast.side : ''].filter(Boolean).join('・') || 'すぐ記録')}</small></span></button>
+      <button class="act" style="background:var(--g-breast)" data-act="breast"><b>${ICON.breast}</b><span class="al">母乳<small>${btLoad() ? '計測中…' : esc(lastBreast?.side ? '前回' + lastBreast.side : 'タイマー')}</small></span></button>
       <button class="act" style="background:var(--g-feed)" data-act="milk"><b>${ICON.feed}</b><span class="al">ミルク<small>${lastMilk?.amount ? lastMilk.amount + 'ml' : 'すぐ記録'}</small></span></button>
       <button class="act" style="background:var(--g-sleep)" data-act="sleep"><b>${ongoing ? ICON.wake : ICON.sleep}</b><span class="al">${ongoing ? '起きた' : '寝た'}<small>すぐ記録</small></span></button>
       <button class="act" style="background:var(--g-diaper)" data-act="diaper"><b>${ICON.diaper}</b><span class="al">おむつ<small>おしっこ</small></span></button>
       <button class="act" style="background:var(--g-temp)" data-act="temp"><b>${ICON.temp}</b><span class="al">体温<small>入力</small></span></button>
       <button class="act" style="background:var(--g-memo)" data-act="memo"><b>${ICON.memo}</b><span class="al">メモ<small>入力</small></span></button>
     </div>
-    <p class="act-hint">タップですぐ記録 ・ 母乳・ミルク・おむつは<b>長押し</b>で詳しく入力</p>
+    <p class="act-hint">タップですぐ記録（母乳はタイマー） ・ <b>長押し</b>で詳しく入力</p>
     ${tasksHTML()}
     ${miltonHTML()}
     <div class="stats">
@@ -572,6 +573,7 @@ function renderToday(){
   `;
   $('v-today').querySelectorAll('[data-act]').forEach(bindActButton);
   if($('wakeBanner')) $('wakeBanner').onclick = quickSleep;
+  if($('btBanner')){ $('btBanner').onclick = openBreastTimer; btTick(); }
   if($('mt_done')) $('mt_done').onclick = miltonDone;
   bindTasks($('v-today'));
   if($('mt_edit')) $('mt_edit').onclick = miltonEdit;
@@ -816,6 +818,104 @@ function miltonEdit(){
   };
 }
 
+/* ---------- 母乳タイマー（左右それぞれ） ---------- */
+// 開始時刻を端末に保存するので、アプリを閉じたり画面が消えても時間はずれない
+const BT_KEY = 'babylog_btimer';
+function btLoad(){ try{ return JSON.parse(localStorage.getItem(BT_KEY)) || null; }catch(e){ return null; } }
+function btSave(st){ try{ st ? localStorage.setItem(BT_KEY, JSON.stringify(st)) : localStorage.removeItem(BT_KEY); }catch(e){} }
+function btElapsed(st, side){ return st ? (st.acc[side] || 0) + (st.side === side ? Date.now() - st.since : 0) : 0; }
+const mmss = ms => { const x = Math.floor(ms / 1000); return `${Math.floor(x / 60)}:${pad(x % 60)}`; };
+const secMin = sec => Math.max(1, Math.round(sec / 60));
+function breastDetail(e){
+  if(e.lSec > 0 && e.rSec > 0) return `（左${secMin(e.lSec)}分・右${secMin(e.rSec)}分）`;
+  return e.side ? '（' + esc(e.side) + '）' : '';
+}
+function btBannerInner(st){
+  const l = btElapsed(st, '左'), r = btElapsed(st, '右');
+  return `<span class="bn-main"><span class="bn-ic">${ICON.breast}<span>${st.side ? `授乳中（${st.side}）` : '授乳タイマー 一時停止中'}</span></span>
+    <small>左 ${mmss(l)} ・ 右 ${mmss(r)} ・ タップで開く</small></span>
+    <span class="bn-wake bt-clock">${mmss(l + r)}</span>`;
+}
+let btTimer = null;
+function btTick(){
+  if(btTimer) return;
+  btTimer = setInterval(() => {
+    const st = btLoad();
+    if($('bt_total')) btRender();
+    if($('btBanner') && st) $('btBanner').innerHTML = btBannerInner(st);
+    if(!$('bt_total') && !$('btBanner')){ clearInterval(btTimer); btTimer = null; }
+  }, 1000);
+}
+function btTap(side){
+  let st = btLoad();
+  const now = Date.now();
+  if(!st) st = { start: now, side: null, since: 0, acc: { '左': 0, '右': 0 }, endSide: null };
+  if(st.side) st.acc[st.side] += now - st.since;
+  if(st.side === side){ st.side = null; }
+  else { st.side = side; st.since = now; st.endSide = side; }
+  btSave(st);
+  buzz();
+  btRender();
+}
+function btRender(){
+  const st = btLoad();
+  const l = btElapsed(st, '左'), r = btElapsed(st, '右');
+  if(!$('bt_total')) return;
+  $('bt_total').textContent = mmss(l + r);
+  [['左', 'l', l], ['右', 'r', r]].forEach(([sd, k, ms]) => {
+    $('bt_' + k).textContent = mmss(ms);
+    const run = st && st.side === sd;
+    $('bt_s_' + k).textContent = run ? '計測中（タップで一時停止）' : ms ? '一時停止中' : 'タップで開始';
+    document.querySelector(`[data-bt="${sd}"]`).classList.toggle('run', !!run);
+  });
+  $('bt_done').disabled = !(l + r >= 1000);
+  $('bt_quick').hidden = !!st;
+  if(st) $('bt_hint').textContent = st.side ? `${st.side}を計測中。反対側をタップすると切り替わります` : '一時停止中。続ける側をタップしてね';
+}
+function openBreastTimer(){
+  const breasts = S.events.filter(isBreast);
+  const last = breasts[breasts.length - 1];
+  const lastEnd = last?.endSide || (last?.side === '左' || last?.side === '右' ? last.side : null);
+  const suggest = lastEnd ? (lastEnd === '左' ? '右' : '左') : null;
+  openSheet(`
+    <h3 class="fh"><span class="fh-ic" style="background:var(--g-breast)">${ICON.breast}</span>母乳タイマー</h3>
+    <div class="bt-total" id="bt_total">0:00</div>
+    <p class="note center" id="bt_hint">${suggest ? `前回は${lastEnd}で終わりました。${suggest}からどうぞ` : '始める側をタップしてね'}</p>
+    <div class="bt-sides">${['左', '右'].map(sd => `
+      <button class="bt-side${suggest === sd ? ' sug' : ''}" data-bt="${sd}">
+        <span class="bt-l">${sd}</span><span class="bt-t" id="bt_${sd === '左' ? 'l' : 'r'}">0:00</span><small id="bt_s_${sd === '左' ? 'l' : 'r'}">タップで開始</small>
+      </button>`).join('')}
+    </div>
+    <div class="btns"><button class="ghost" id="bt_cancel">やめる</button><button class="primary" id="bt_done">完了して記録</button></div>
+    <button class="linkbtn center" id="bt_quick">時間をはからずに記録する</button>`);
+  $('sheet').querySelectorAll('[data-bt]').forEach(b => b.onclick = () => btTap(b.dataset.bt));
+  $('bt_quick').onclick = () => { closeSheet(); quickFeed('母乳'); };
+  $('bt_cancel').onclick = () => {
+    if(btLoad() && !confirm('タイマーを止めて、記録せずに終わりますか？')) return;
+    btSave(null); closeSheet(); render();
+  };
+  $('bt_done').onclick = () => {
+    const st = btLoad();
+    if(!st) return;
+    const l = btElapsed(st, '左'), r = btElapsed(st, '右');
+    if(l + r < 1000) return;
+    const lSec = Math.round(l / 1000), rSec = Math.round(r / 1000);
+    const ev = { id: uid(), type: 'feed', t: st.start, sub: '母乳', amount: secMin(lSec + rSec),
+      side: lSec && rSec ? '両方' : lSec ? '左' : '右', lSec, rSec, endSide: st.endSide };
+    putEvent(ev);
+    btSave(null);
+    closeSheet();
+    buzz();
+    actionToast(`${describe(ev)}を記録しました`, [
+      { label: '取り消す', fn: () => { removeEvent(ev.id); toast('取り消しました'); } },
+      { label: '編集する', fn: () => editLater(ev.id) }
+    ]);
+    render();
+  };
+  btRender();
+  btTick();
+}
+
 // 最後のうんち（今日でなければ日付も）
 function lastPoopHTML(){
   const ps = S.events.filter(isPoop);
@@ -865,7 +965,7 @@ function bindActButton(b){
     if(long){ long = false; return; }
     if(t === 'sleep') quickSleep();
     else if(t === 'milk') quickFeed('ミルク');
-    else if(t === 'breast') quickFeed('母乳');
+    else if(t === 'breast') openBreastTimer();
     else if(t === 'diaper') quickDiaper();
     else openForm(t);
   };
@@ -880,7 +980,8 @@ function quickFeed(sub){
   const same = S.events.filter(sub === 'ミルク' ? isMilk : isBreast);
   const last = same[same.length - 1];
   const ev = { id: uid(), type: 'feed', t: Date.now(), sub };
-  if(last?.amount) ev.amount = last.amount;
+  // ミルクは前回の量を引き継ぐ（母乳はタイマーで測るので、時間なしで記録）
+  if(sub === 'ミルク' && last?.amount) ev.amount = last.amount;
   putEvent(ev);
   buzz();
   if(sub === 'ミルク'){
