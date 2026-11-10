@@ -6,7 +6,7 @@ import {
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, query, where, orderBy,
-  onSnapshot, writeBatch, serverTimestamp, Timestamp
+  onSnapshot, writeBatch, serverTimestamp, Timestamp, deleteField
 } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 import { ICON, BABY } from './icons.js';
@@ -110,6 +110,7 @@ const S = {
   familyId: null,
   baby: {name:'', birth:''},
   milton: null,     // ミルトン（消毒液）を最後に交換した時刻 {t, by}
+  tasks: {},        // 短期間の予定 {id: {name, freq, every, time, start, end, done:{日付:{t,by}}}}
   members: {},     // uid -> {name, photo}
   events: [],
   ready: false,
@@ -164,7 +165,7 @@ $('loginBtn').onclick = async () => {
 onAuthStateChanged(auth, async user => {
   stopListeners();
   S.user = user;
-  S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.milton = null; S.ready = false;
+  S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.milton = null; S.tasks = {}; S.ready = false;
   if(!user){ showScreen('login'); return; }
   showScreen('loading');
   try{
@@ -338,6 +339,7 @@ function startFamily(fid){
   S.unsubs.push(onSnapshot(doc(fs, 'families', fid), snap => {
     S.baby = snap.data()?.baby || {name:'', birth:''};
     S.milton = snap.data()?.milton || null;
+    S.tasks = snap.data()?.tasks || {};
     gotFamily = true; ready();
   }, onErr));
 
@@ -434,6 +436,7 @@ function renderToday(){
       <button class="act" style="background:var(--g-memo)" data-act="memo"><b>${ICON.memo}</b><span class="al">メモ<small>入力</small></span></button>
     </div>
     <p class="act-hint">タップですぐ記録 ・ 母乳・ミルク・おむつは<b>長押し</b>で詳しく入力</p>
+    ${tasksHTML()}
     ${miltonHTML()}
     <div class="stats">
       <div class="stat"><div class="k">今日の授乳</div><div class="v">${feedSessions(list).length}<small>回</small></div><div class="d">ミルク${todayMilk}回 ${milk}ml ・ 母乳${todayBreast}回</div></div>
@@ -449,9 +452,193 @@ function renderToday(){
   $('v-today').querySelectorAll('[data-act]').forEach(bindActButton);
   if($('wakeBanner')) $('wakeBanner').onclick = quickSleep;
   if($('mt_done')) $('mt_done').onclick = miltonDone;
+  bindTasks($('v-today'));
   if($('mt_edit')) $('mt_edit').onclick = miltonEdit;
   $('v-today').querySelectorAll('[data-ev]').forEach(li => li.onclick = () => openForm(null, li.dataset.ev));
 }
+/* ---------- 短期間の予定（へその緒のお手入れ・お薬など） ---------- */
+const FREQ = { daily: '毎日', weekly: '週1回', interval: '数日おき', once: '1回だけ' };
+const FREQ_KEY = Object.fromEntries(Object.entries(FREQ).map(([k, v]) => [v, k]));
+const dateKey = t => { const d = new Date(t); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); };
+const keyDay = k => new Date(k + 'T00:00').getTime();
+const mdw = t => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()}（${WD[d.getDay()]}）`; };
+const addDays = (t, n) => { const d = new Date(t); d.setDate(d.getDate() + n); return startOfDay(d.getTime()); };
+const dayDiff = (a, b) => Math.round((startOfDay(a) - startOfDay(b)) / DAY);
+
+function taskDue(t, day){
+  if(!t.start) return false;
+  const st = keyDay(t.start);
+  if(day < st || (t.end && day > keyDay(t.end))) return false;
+  const n = dayDiff(day, st);
+  if(t.freq === 'daily') return true;
+  if(t.freq === 'weekly') return n % 7 === 0;
+  if(t.freq === 'interval') return n % Math.max(1, t.every || 2) === 0;
+  return n === 0;   // once
+}
+function taskPrevDue(t, today){
+  for(let i = 1; i <= 31; i++){ const d = addDays(today, -i); if(taskDue(t, d)) return d; }
+  return null;
+}
+function taskNextDue(t, today){
+  for(let i = 1; i <= 90; i++){ const d = addDays(today, i); if(taskDue(t, d)) return d; }
+  return null;
+}
+function taskRemaining(t, today){
+  if(!t.end) return null;
+  let n = 0;
+  for(let d = today; d <= keyDay(t.end) && n < 400; d = addDays(d, 1)) if(taskDue(t, d)) n++;
+  return n;
+}
+function freqText(t){
+  if(t.freq === 'weekly') return `毎週${WD[new Date(keyDay(t.start)).getDay()]}曜`;
+  if(t.freq === 'interval') return `${t.every || 2}日ごと`;
+  return FREQ[t.freq] || '';
+}
+function timePassed(t){
+  if(!t.time) return false;
+  const [h, m] = t.time.split(':').map(Number);
+  const d = new Date(); d.setHours(h, m || 0, 0, 0);
+  return Date.now() >= d.getTime();
+}
+
+function tasksHTML(){
+  const today = startOfDay(Date.now()), tk = dateKey(today);
+  const all = Object.entries(S.tasks || {}).map(([id, t]) => ({ id, ...t })).filter(t => t && t.start);
+  // 期間が終わったもの、1回だけで済んだものは出さない
+  const active = all.filter(t => {
+    if(t.end && keyDay(t.end) < today){
+      const p = taskPrevDue(t, addDays(keyDay(t.end), 1));
+      return p && dayDiff(today, p) <= 1 && !t.done?.[dateKey(p)] && t.freq !== 'daily';
+    }
+    return true;
+  });
+  if(!active.length) return `<button class="task-add-empty" id="t_add"><span>${ICON.task}</span>予定を追加<small>へその緒のお手入れ・お薬など、しばらく続くこと</small></button>`;
+
+  const items = [];
+  active.forEach(t => {
+    const due = taskDue(t, today);
+    const done = t.done?.[tk];
+    const remain = taskRemaining(t, today);
+    const meta = [freqText(t), t.time, t.end ? `${mdw(keyDay(t.end))}まで` : ''].filter(Boolean).join(' ・ ');
+    if(due){
+      const late = !done && timePassed(t);
+      items.push({ order: done ? 3 : late ? 0 : 1, sort: t.time || '99', html: `
+        <li class="task${done ? ' done' : ''}${late ? ' late' : ''}">
+          <button class="t-check" data-check="${esc(t.id)}" data-key="${tk}" aria-label="完了">${done ? '✓' : ''}</button>
+          <div class="t-body" data-edit="${esc(t.id)}"><b>${esc(t.name)}</b>
+            <small>${esc(meta)}${done ? ` ・ ✓ ${hm(done.t)}${whoName(done.by) ? ' ' + esc(whoName(done.by)) : ''}` : late ? ' ・ <em>時間です</em>' : ''}${!done && remain ? ` ・ あと${remain}回` : ''}</small></div>
+        </li>` });
+    }
+    // 毎日以外は、前回分がまだなら一緒に出す
+    if(t.freq !== 'daily'){
+      const p = taskPrevDue(t, today);
+      if(p && !t.done?.[dateKey(p)] && dayDiff(today, p) <= 7){
+        items.push({ order: 0, sort: '00', html: `
+          <li class="task late">
+            <button class="t-check" data-check="${esc(t.id)}" data-key="${dateKey(p)}" aria-label="完了">${''}</button>
+            <div class="t-body" data-edit="${esc(t.id)}"><b>${esc(t.name)}</b><small><em>${mdw(p)}の分がまだです</em> ・ ${esc(freqText(t))}</small></div>
+          </li>` });
+      }
+    }
+    if(!due){
+      const nx = taskNextDue(t, today);
+      if(nx) items.push({ order: 4, sort: String(nx), html: `
+        <li class="task later">
+          <span class="t-next">次</span>
+          <div class="t-body" data-edit="${esc(t.id)}"><b>${esc(t.name)}</b><small>次は ${mdw(nx)}${t.time ? ' ' + esc(t.time) : ''} ・ ${esc(freqText(t))}</small></div>
+        </li>` });
+    }
+  });
+  items.sort((a, b) => a.order - b.order || String(a.sort).localeCompare(String(b.sort)));
+  const pending = items.filter(i => i.order <= 1).length;
+  return `<div class="card tasks">
+    <div class="tasks-head"><h3>今日の予定${pending ? `<span class="badge">${pending}</span>` : ''}</h3><button class="t-add" id="t_add">＋ 追加</button></div>
+    <ul class="tasklist">${items.map(i => i.html).join('')}</ul>
+  </div>`;
+}
+
+function bindTasks(root){
+  if($('t_add')) $('t_add').onclick = () => openTaskForm(null);
+  root.querySelectorAll('[data-check]').forEach(b => b.onclick = () => toggleTask(b.dataset.check, b.dataset.key));
+  root.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openTaskForm(b.dataset.edit));
+}
+function famRef(){ return doc(fs, 'families', S.familyId); }
+function toggleTask(id, key){
+  const t = S.tasks[id];
+  if(!t) return;
+  const path = `tasks.${id}.done.${key}`;
+  if(t.done?.[key]){
+    updateDoc(famRef(), { [path]: deleteField() }).catch(e => { console.error(e); toast('保存に失敗しました'); });
+    toast('チェックを外しました');
+  } else {
+    updateDoc(famRef(), { [path]: { t: Date.now(), by: S.user.uid } }).catch(e => { console.error(e); toast('保存に失敗しました'); });
+    buzz();
+    toast(`「${t.name}」完了 ✓`);
+  }
+}
+
+function openTaskForm(id){
+  const t = id ? S.tasks[id] : null;
+  const today = dateKey(Date.now());
+  F = { type: 'task', id: id || uid(), freq: FREQ[t?.freq || 'daily'] };
+  const setEnd = days => {
+    const st = $('t_start').value || today;
+    $('t_end').value = days ? dateKey(addDays(keyDay(st), days - 1)) : '';
+  };
+  const refresh = () => {
+    const f = FREQ_KEY[F.freq];
+    $('t_everyBox').hidden = f !== 'interval';
+    $('t_endBox').hidden = f === 'once';
+    const st = $('t_start').value;
+    $('t_weekNote').hidden = f !== 'weekly';
+    if(st) $('t_weekNote').textContent = `開始日と同じ曜日（毎週${WD[new Date(keyDay(st)).getDay()]}曜日）にくり返します`;
+  };
+  F.onSeg = k => { if(k === 'freq') refresh(); };
+  openSheet(`
+    <h3 class="fh"><span class="fh-ic" style="background:var(--g-task)">${ICON.task}</span>予定を${t ? '編集' : '追加'}</h3>
+    <label>名前<input id="t_name" value="${esc(t?.name || '')}" placeholder="例：へその緒のお手入れ"></label>
+    <div class="chips pick">${['へその緒のお手入れ', 'お薬', '目薬', '保湿', '体重をはかる'].map(n => `<button type="button" class="chip" data-name="${n}">${n}</button>`).join('')}</div>
+    <div class="lbl">くり返し</div>
+    ${seg('freq', Object.values(FREQ), F.freq)}
+    <div id="t_everyBox"><label>何日ごと？<input id="t_every" type="number" inputmode="numeric" min="2" max="30" value="${esc(t?.every || 2)}"></label></div>
+    <p class="note small" id="t_weekNote"></p>
+    <label>時刻（任意）<input id="t_time" type="time" value="${esc(t?.time || '')}"></label>
+    <label>開始日<input id="t_start" type="date" value="${esc(t?.start || today)}"></label>
+    <div id="t_endBox">
+      <label>終了日（任意・空欄ならずっと）<input id="t_end" type="date" value="${esc(t?.end || '')}"></label>
+      <div class="chips pick">${[['1週間', 7], ['2週間', 14], ['1か月', 30], ['なし', 0]].map(([l, d]) => `<button type="button" class="chip" data-end="${d}">${l}</button>`).join('')}</div>
+      <p class="note small">期間が終わった予定は、自動で表示されなくなります。</p>
+    </div>
+    <div class="btns">${t ? '<button class="danger" id="t_del">削除</button>' : ''}<button class="ghost" id="t_cancel">やめる</button><button class="primary" id="t_save">保存</button></div>`);
+  refresh();
+  $('t_start').onchange = refresh;
+  $('sheet').querySelectorAll('[data-name]').forEach(b => b.onclick = () => { $('t_name').value = b.dataset.name; });
+  $('sheet').querySelectorAll('[data-end]').forEach(b => b.onclick = () => setEnd(+b.dataset.end));
+  $('t_cancel').onclick = closeSheet;
+  if($('t_del')) $('t_del').onclick = () => {
+    if(!confirm(`「${t.name}」の予定を削除しますか？（家族全員の画面から消えます）`)) return;
+    updateDoc(famRef(), { [`tasks.${F.id}`]: deleteField() }).catch(e => { console.error(e); toast('削除に失敗しました'); });
+    closeSheet(); toast('予定を削除しました');
+  };
+  $('t_save').onclick = () => {
+    const name = $('t_name').value.trim();
+    const freq = FREQ_KEY[F.freq] || 'daily';
+    const start = $('t_start').value;
+    const end = freq === 'once' ? '' : $('t_end').value;
+    const every = Math.round(+$('t_every').value || 2);
+    if(!name){ toast('名前を入れてね'); return; }
+    if(!start){ toast('開始日を入れてね'); return; }
+    if(end && end < start){ toast('終了日が開始日より前です'); return; }
+    if(freq === 'interval' && (every < 2 || every > 30)){ toast('2〜30日の間で入れてね'); return; }
+    const data = { name: name.slice(0, 40), freq, start, time: $('t_time').value || '', end: end || '',
+      done: t?.done || {}, createdBy: t?.createdBy || S.user.uid };
+    if(freq === 'interval') data.every = every;
+    updateDoc(famRef(), { [`tasks.${F.id}`]: data }).catch(e => { console.error(e); toast('保存に失敗しました'); });
+    closeSheet();
+    toast(t ? '予定を更新しました ✓' : '予定を追加しました ✓');
+  };
+}
+
 /* ---------- ミルトン（哺乳びんの消毒液） ---------- */
 // 薬液は1日1回の交換で24時間有効とされているので、24時間を目安に表示
 const MILTON_LIMIT = 24 * HOUR;
@@ -638,6 +825,7 @@ document.addEventListener('click', e => {
   const group = b.parentElement;
   group.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
   F[group.dataset.k] = b.dataset.v;
+  if(typeof F.onSeg === 'function') F.onSeg(group.dataset.k);
   if(F.type === 'feed' && $('amtLabel')) $('amtLabel').firstChild.textContent = amtLabel();
   if(F.type === 'diaper' && group.dataset.k === 'sub' && $('poopBox')) $('poopBox').hidden = F.sub === 'おしっこ';
   if(F.type === 'feed' && group.dataset.k === 'sub' && $('sideBox')) $('sideBox').hidden = F.sub === 'ミルク';
@@ -1230,7 +1418,7 @@ async function leaveFamily(){
     stopListeners();
     await deleteDoc(doc(fs, 'families', fid, 'members', S.user.uid));
     await setDoc(doc(fs, 'users', S.user.uid), { familyId: null });
-    S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.milton = null; S.ready = false;
+    S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.milton = null; S.tasks = {}; S.ready = false;
     renderOnboard();
     showScreen('onboard');
     toast('家族から抜けました');
