@@ -35,6 +35,125 @@ function applyTheme(){
 }
 applyTheme();
 
+/* ---------- ミルクのアラーム（アプリを開いている間だけ） ---------- */
+const ALARM_KEY = 'babylog_alarm', ALARM_STATE_KEY = 'babylog_alarm_state';
+const ALARM_MINS = [120, 150, 180, 210, 240];
+const minLabel = m => `${Math.floor(m / 60)}時間${m % 60 ? '半' : ''}`;
+function alarmCfg(){
+  let c = {};
+  try{ c = JSON.parse(localStorage.getItem(ALARM_KEY)) || {}; }catch(e){}
+  return { on: c.on !== false, min: ALARM_MINS.includes(c.min) ? c.min : 180, wake: !!c.wake };
+}
+function setAlarmCfg(p){
+  try{ localStorage.setItem(ALARM_KEY, JSON.stringify({ ...alarmCfg(), ...p })); }catch(e){}
+  if(p.on === false) stopAlarm();
+  if(p.on !== undefined || p.min !== undefined){ checkMilkAlarm(); }
+}
+function alarmState(){ try{ return JSON.parse(localStorage.getItem(ALARM_STATE_KEY)) || {}; }catch(e){ return {}; } }
+function setAlarmState(st){ try{ localStorage.setItem(ALARM_STATE_KEY, JSON.stringify(st)); }catch(e){} }
+function alarmNote(last){
+  const c = alarmCfg();
+  if(!c.on || !last) return '';
+  const st = alarmState();
+  const due = st.id === last.id && st.snoozeUntil > Date.now() ? st.snoozeUntil : last.t + c.min * MIN;
+  if(st.id === last.id && st.dismissed) return '';
+  return ` ・ <span class="al-note">⏰${hm(due)}</span>`;
+}
+
+// 音（ブラウザは一度画面に触れたあとでないと音を出せないので、最初のタッチで準備しておく）
+let actx = null;
+function audioCtx(){
+  try{
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    if(actx.state === 'suspended') actx.resume();
+  }catch(e){ actx = null; }
+  return actx;
+}
+document.addEventListener('pointerdown', () => audioCtx(), { capture: true });
+function chime(){
+  const c = audioCtx();
+  if(!c) return;
+  const t0 = c.currentTime + 0.02;
+  [[1046.5, 0], [1318.5, .18], [1568, .36], [2093, .54]].forEach(([f, dt]) => {
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = 'sine'; o.frequency.value = f;
+    g.gain.setValueAtTime(0.0001, t0 + dt);
+    g.gain.exponentialRampToValueAtTime(0.45, t0 + dt + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.5);
+    o.connect(g); g.connect(c.destination);
+    o.start(t0 + dt); o.stop(t0 + dt + 0.55);
+  });
+}
+
+let alarmTimer = null, alarmFor = null;
+function checkMilkAlarm(){
+  if(!S.ready) return;
+  const c = alarmCfg();
+  const milks = S.events.filter(isMilk);
+  const last = milks[milks.length - 1];
+  // 鳴っている間にミルクが記録されたら止める（家族が記録した場合も）
+  if(alarmFor && (!last || last.id !== alarmFor || !c.on)){ stopAlarm(); }
+  if(!c.on || !last || alarmFor) return;
+  const st = alarmState();
+  if(st.id === last.id && st.dismissed) return;
+  if(st.id === last.id && st.snoozeUntil && Date.now() < st.snoozeUntil) return;
+  const due = last.t + c.min * MIN;
+  if(Date.now() < due) return;
+  // 大きく過ぎてから開いたときは、音は鳴らさず表示だけ
+  showMilkAlarm(last, c, Date.now() - due < 2 * HOUR);
+}
+function showMilkAlarm(last, c, loud){
+  alarmFor = last.id;
+  const el = document.createElement('div');
+  el.className = 'alarm';
+  el.innerHTML = `
+    <div class="alarm-box" role="alertdialog" aria-label="ミルクのアラーム">
+      <div class="alarm-ic">${ICON.feed}</div>
+      <h2>ミルクから${minLabel(c.min)}たちました</h2>
+      <p>最後のミルク ${hm(last.t)}（${durTxt(Date.now() - last.t)}前${last.amount ? ' ・ ' + esc(last.amount) + 'ml' : ''}）</p>
+      <button class="alarm-main" id="al_feed">ミルクを記録する</button>
+      <div class="alarm-sub">
+        <button id="al_snooze">15分後にもう一度</button>
+        <button id="al_stop">止める</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+  el.querySelector('#al_feed').onclick = () => { setAlarmState({ id: last.id, dismissed: true }); stopAlarm(); quickFeed('ミルク'); };
+  el.querySelector('#al_snooze').onclick = () => { setAlarmState({ id: last.id, snoozeUntil: Date.now() + 15 * MIN }); stopAlarm(); toast('15分後にもう一度鳴らします'); render(); };
+  el.querySelector('#al_stop').onclick = () => { setAlarmState({ id: last.id, dismissed: true }); stopAlarm(); render(); };
+  if(loud){
+    let n = 0;
+    const ring = () => {
+      if(!alarmFor) return;
+      chime();
+      try{ navigator.vibrate?.([400, 150, 400]); }catch(e){}
+      if(++n < 24) alarmTimer = setTimeout(ring, 2500);   // 約1分鳴らす
+    };
+    ring();
+  }
+}
+function stopAlarm(){
+  clearTimeout(alarmTimer); alarmTimer = null;
+  try{ navigator.vibrate?.(0); }catch(e){}
+  document.querySelectorAll('.alarm').forEach(x => x.remove());
+  alarmFor = null;
+}
+
+// 画面をつけたままにする（対応しているブラウザのみ）
+let wakeLock = null;
+async function applyWake(){
+  const want = alarmCfg().wake && document.visibilityState === 'visible' && S.ready;
+  if(want && !wakeLock && 'wakeLock' in navigator){
+    try{
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    }catch(e){ wakeLock = null; }
+  } else if(!want && wakeLock){
+    try{ await wakeLock.release(); }catch(e){}
+    wakeLock = null;
+  }
+}
+
 /* ---------- 振動・取り消しボタン付きの通知 ---------- */
 const buzz = (ms = 25) => { try{ navigator.vibrate?.(ms); }catch(e){} };
 const atoast = document.createElement('div');
@@ -382,6 +501,8 @@ function render(){
   if(view === 'today') renderToday();
   else if(view === 'stats') renderStats();
   else renderSet();
+  checkMilkAlarm();
+  applyWake();
 }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => { view = b.dataset.view; render(); window.scrollTo(0,0); });
 document.querySelectorAll('.nv').forEach(el => el.innerHTML = ICON[el.dataset.ic]);
@@ -443,7 +564,7 @@ function renderToday(){
       <div class="stat"><div class="k">今日の睡眠</div><div class="v">${durTxt(sleepMs)}</div><div class="d">${sleeps.length}回</div></div>
       <div class="stat"><div class="k">今日のおむつ</div><div class="v">${diapers.length}<small>回</small></div><div class="d">おしっこ ${pee} ・ うんち ${poop}</div>${lastPoopHTML()}</div>
       <div class="stat"><div class="k">前回から</div>
-        ${sinceRow('ミルク', lastMilk, 'milk', 'ml')}
+        ${sinceRow('ミルク', lastMilk, 'milk', 'ml', alarmNote(lastMilk))}
         ${sinceRow('母乳', lastBreast, 'breast', '分')}
       </div>
     </div>
@@ -706,9 +827,9 @@ function lastPoopHTML(){
   const c = stoolOf(e.color);
   return `<div class="lastpoop">最後のうんち<br><b>${when}</b>${c ? ` <span class="sw" style="background:${c[1]}"></span>` : ''}<small>（${ago}）</small></div>`;
 }
-function sinceRow(label, e, cls, unit){
+function sinceRow(label, e, cls, unit, extra = ''){
   return `<div class="since"><span class="tag tag-${cls}">${label}</span>`
-    + (e ? `<b>${durTxt(Date.now() - e.t)}</b><small>${hm(e.t)}${e.amount ? ' ・ ' + esc(e.amount) + unit : ''}${e.side ? ' ・ ' + esc(e.side) : ''}</small>` : '<b class="none">—</b>')
+    + (e ? `<b>${durTxt(Date.now() - e.t)}</b><small>${hm(e.t)}${e.amount ? ' ・ ' + esc(e.amount) + unit : ''}${e.side ? ' ・ ' + esc(e.side) : ''}${extra}</small>` : '<b class="none">—</b>')
     + '</div>';
 }
 function timelineHTML(list, asc = false){
@@ -1335,6 +1456,15 @@ function renderSet(){
       <button class="linkbtn" id="s_export">バックアップを書き出す（JSON）</button>
       <button class="linkbtn" id="s_import">バックアップから読み込む</button>
     </div>
+    <div class="card"><h3>ミルクのアラーム</h3>
+      <p class="note">最後のミルクから決めた時間がたつと、音とバイブで知らせます。<b>アプリを開いて画面がついているときだけ</b>鳴ります（この端末だけの設定）。</p>
+      <div class="tseg">${[['1', 'オン'], ['0', 'オフ']].map(([v, l]) => `<button data-al-on="${v}" class="${(alarmCfg().on ? '1' : '0') === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <div class="lbl">鳴らすまでの時間</div>
+      <div class="tseg">${ALARM_MINS.map(m => `<button data-al-min="${m}" class="${alarmCfg().min === m ? 'on' : ''}">${minLabel(m)}</button>`).join('')}</div>
+      <label class="sw-row"><span>画面をつけたままにする<small>アプリを開いている間、画面が自動で消えなくなります。枕元に置いておくときに（電池を多めに使います）</small></span><input type="checkbox" id="al_wake" ${alarmCfg().wake ? 'checked' : ''}></label>
+      <div class="btns"><button class="ghost" id="al_test">音を試す</button></div>
+      <p class="note small">スマホの「メディアの音量」で鳴ります。音が小さいときは音量を上げてください。</p>
+    </div>
     <div class="card"><h3>夜間モード</h3>
       <p class="note">夜はまぶしくない暗い画面になります（この端末だけの設定）。</p>
       <div class="tseg">${[['auto', '自動（19〜6時）'], ['on', 'いつも'], ['off', 'オフ']].map(([v, l]) =>
@@ -1352,6 +1482,10 @@ function renderSet(){
   $('s_import').onclick = () => $('importFile').click();
   $('s_logout').onclick = () => signOut(auth);
   $('s_leave').onclick = leaveFamily;
+  $('v-set').querySelectorAll('[data-al-on]').forEach(b => b.onclick = () => { setAlarmCfg({ on: b.dataset.alOn === '1' }); renderSet(); });
+  $('v-set').querySelectorAll('[data-al-min]').forEach(b => b.onclick = () => { setAlarmCfg({ min: +b.dataset.alMin }); renderSet(); });
+  $('al_wake').onchange = e => { setAlarmCfg({ wake: e.target.checked }); applyWake(); toast(e.target.checked ? 'アプリを開いている間、画面がついたままになります' : '画面は自動で消えるようになります'); };
+  $('al_test').onclick = () => { chime(); try{ navigator.vibrate?.([300, 120, 300]); }catch(e){} };
   $('v-set').querySelectorAll('[data-theme-v]').forEach(b => b.onclick = () => {
     try{ localStorage.setItem(THEME_KEY, b.dataset.themeV); }catch(e){}
     applyTheme();
@@ -1511,6 +1645,11 @@ setInterval(() => {
   applyTheme();
   if(S.ready && view === 'today' && !$('ov').classList.contains('show')) renderToday();
 }, 30000);
+setInterval(checkMilkAlarm, 15000);
+document.addEventListener('visibilitychange', () => {
+  applyWake();
+  if(document.visibilityState === 'visible') checkMilkAlarm();
+});
 
 if('serviceWorker' in navigator && location.protocol === 'https:'){
   // 新しい版に切り替わったら自動で読み込み直す（入力中は「新しい版」の案内だけ）
