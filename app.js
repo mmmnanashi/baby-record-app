@@ -1104,7 +1104,7 @@ function quickSleep(){
 }
 
 /* ---------- 記録フォーム ---------- */
-const amtLabel = () => F.type === 'temp' ? '体温 (℃)' : (F.sub === 'ミルク' ? '量 (ml)' : '時間 (分)');
+const amtLabel = () => F.type === 'temp' ? '体温 (℃)' : (F.sub === 'ミルク' ? '量 (ml)' : '合計の時間 (分)');
 function seg(key, opts, cur){
   return `<div class="seg" data-k="${key}">${opts.map(o => `<button type="button" data-v="${o}" class="${o === cur ? 'on' : ''}">${o}</button>`).join('')}</div>`;
 }
@@ -1126,13 +1126,24 @@ function openForm(type, id, preset = {}){
   if(ev) type = ev.type;
   const e = ev || {};
   F = {type, id: e.id || null, by: e.by || null, sub: e.sub || preset.sub || ({feed:'母乳', diaper:'おしっこ'}[type] || null),
-       color: stoolOf(e.color) ? Number(e.color) : null, stool: e.stool || null, side: e.side || null, returnDay};
+       color: stoolOf(e.color) ? Number(e.color) : null, stool: e.stool || null, side: e.side || null, returnDay,
+       keep: { startT: e.startT, endSide: e.endSide }};
 
-  let h = `<h3 class="fh"><span class="fh-ic" style="background:${TYPES[type].color}">${TYPES[type].icon}</span>${TYPES[type].label}を${ev ? '編集' : '記録'}</h3>`;
+  const brst = type === 'feed' && F.sub !== 'ミルク';
+  let h = `<h3 class="fh"><span class="fh-ic" style="background:${brst ? 'var(--g-breast)' : TYPES[type].color}">${brst ? ICON.breast : TYPES[type].icon}</span>${brst ? '母乳' : type === 'feed' ? 'ミルク' : TYPES[type].label}を${ev ? '編集' : '記録'}</h3>`;
   if(ev && whoName(ev.by)) h += `<p class="note">記録した人：${esc(whoName(ev.by))}</p>`;
   if(type === 'feed'){
     h += seg('sub', ['母乳','ミルク'], F.sub);
-    h += `<div id="sideBox" ${F.sub === 'ミルク' ? 'hidden' : ''}><div class="lbl">どちらの胸？（任意）</div>${seg('side', ['左','右','両方'], F.side)}</div>`;
+    // 左右それぞれの時間（タイマーで測った分は、あとから直せる）
+    const lv = e.lSec ? f1(e.lSec / 60) : (e.side === '左' && e.amount && !e.rSec ? e.amount : '');
+    const rv = e.rSec ? f1(e.rSec / 60) : (e.side === '右' && e.amount && !e.lSec ? e.amount : '');
+    h += `<div id="sideBox" ${F.sub === 'ミルク' ? 'hidden' : ''}>
+      <div class="lr-row">
+        <label>左（分）<input id="f_l" type="number" inputmode="decimal" step="any" min="0" value="${esc(lv)}"></label>
+        <label>右（分）<input id="f_r" type="number" inputmode="decimal" step="any" min="0" value="${esc(rv)}"></label>
+      </div>
+      <div class="lbl">どちらの胸？（左右の時間を入れると自動で選ばれます）</div>${seg('side', ['左','右','両方'], F.side)}
+    </div>`;
   }
   if(type === 'diaper'){
     h += seg('sub', ['おしっこ','うんち','両方'], F.sub);
@@ -1159,6 +1170,15 @@ function openForm(type, id, preset = {}){
   h += `<div class="btns">${ev ? '<button class="danger" id="f_del">削除</button>' : ''}<button class="ghost" id="f_cancel">やめる</button><button class="primary" id="f_save">保存</button></div>`;
   openSheet(h);
   $('f_save').onclick = saveForm;
+  // 左右の時間を入れたら、合計と「どちらの胸」を自動で合わせる
+  const lrSync = () => {
+    const l = +$('f_l').value || 0, r = +$('f_r').value || 0;
+    if(!(l > 0 || r > 0)) return;
+    $('f_amt').value = f1(l + r);
+    F.side = l > 0 && r > 0 ? '両方' : l > 0 ? '左' : '右';
+    $('sheet').querySelectorAll('.seg[data-k="side"] button').forEach(b => b.classList.toggle('on', b.dataset.v === F.side));
+  };
+  if($('f_l')){ $('f_l').oninput = lrSync; $('f_r').oninput = lrSync; }
   $('sheet').querySelectorAll('[data-color]').forEach(b => b.onclick = () => {
     const n = Number(b.dataset.color);
     F.color = F.color === n ? null : n;
@@ -1208,7 +1228,17 @@ function saveForm(){
     ev.sub = F.sub;
     const v = $('f_amt').value;
     if(v) ev.amount = +v;
-    if(F.sub !== 'ミルク' && F.side) ev.side = F.side;
+    if(F.sub !== 'ミルク'){
+      const l = +$('f_l').value || 0, r = +$('f_r').value || 0;
+      if(l < 0 || r < 0){ toast('時間はプラスの数で入れてね'); return; }
+      if(l > 0 || r > 0){
+        ev.lSec = Math.round(l * 60); ev.rSec = Math.round(r * 60);
+        ev.amount = Math.round((l + r) * 10) / 10;
+        ev.side = l > 0 && r > 0 ? '両方' : l > 0 ? '左' : '右';
+      } else if(F.side) ev.side = F.side;
+      if(F.keep?.startT) ev.startT = F.keep.startT;
+      if(F.keep?.endSide && (ev.side === '両方' || ev.side === F.keep.endSide)) ev.endSide = F.keep.endSide;
+    }
   }
   if(F.type === 'diaper'){
     ev.sub = F.sub;
