@@ -99,8 +99,9 @@ function checkMilkAlarm(){
   if(st.id === last.id && st.snoozeUntil && Date.now() < st.snoozeUntil) return;
   const due = last.t + c.min * MIN;
   if(Date.now() < due) return;
-  // 大きく過ぎてから開いたときは、音は鳴らさず表示だけ
-  showMilkAlarm(last, c, Date.now() - due < 2 * HOUR);
+  // 鳴らす時刻から2時間以上たってから開いたときは、もう知らせない（記録が止まっている日など）
+  if(Date.now() - due >= 2 * HOUR){ setAlarmState({ id: last.id, dismissed: true }); return; }
+  showMilkAlarm(last, c, true);
 }
 function showMilkAlarm(last, c, loud){
   alarmFor = last.id;
