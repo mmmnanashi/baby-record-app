@@ -443,6 +443,11 @@ function startFamily(fid){
       S.ready = true;
       showScreen('app');
       offerLegacyImport();
+      if(new URLSearchParams(location.search).get('alarm') === 'ng'){
+        history.replaceState(null, '', location.pathname);
+        const last = S.events.filter(isMilk).pop();
+        openAlarmSheet(last ? last.t : null, true);
+      }
     } else if(S.ready) render();
   };
   const onErr = e => {
@@ -567,12 +572,14 @@ function renderToday(){
       <div class="stat"><div class="k">前回から</div>
         ${sinceRow('ミルク', lastMilk, 'milk', 'ml', alarmNote(lastMilk))}
         ${sinceRow('母乳', lastBreast, 'breast', '分')}
+        ${lastMilk ? '<button class="al-reg" id="al_reg">⏰ ミルクのアラームを登録</button>' : ''}
       </div>
     </div>
     <div class="card"><h3>今日のタイムライン</h3>${timelineHTML(list)}</div>
   `;
   $('v-today').querySelectorAll('[data-act]').forEach(bindActButton);
   if($('wakeBanner')) $('wakeBanner').onclick = quickSleep;
+  if($('al_reg')) $('al_reg').onclick = () => openAlarmSheet();
   if($('btBanner')){ $('btBanner').onclick = openBreastTimer; btTick(); }
   if($('mt_done')) $('mt_done').onclick = miltonDone;
   bindTasks($('v-today'));
@@ -818,6 +825,60 @@ function miltonEdit(){
   };
 }
 
+/* ---------- 時計アプリにアラームを登録 ---------- */
+// 時刻は24時間表記で渡すので、午前・午後の取り違えが起きない。
+// ブラウザから時計アプリを呼べない端末では、アプリに戻ってきて案内を出す
+function ampm(t){
+  const d = new Date(t), h = d.getHours();
+  return { ap: h < 12 ? '午前' : '午後', hm: `${h % 12}:${pad(d.getMinutes())}`, h24: `${h}:${pad(d.getMinutes())}` };
+}
+function openAlarmSheet(baseT, failed = false){
+  const milks = S.events.filter(isMilk);
+  const base = baseT || milks[milks.length - 1]?.t || Date.now();
+  let min = alarmCfg().min;
+  const draw = () => {
+    const due = base + min * MIN;
+    const a = ampm(due);
+    const left = due - Date.now();
+    const dayLbl = startOfDay(due) === startOfDay(Date.now()) ? '今日' : startOfDay(due) === addDays(startOfDay(Date.now()), 1) ? '明日' : '';
+    $('ar_time').innerHTML = `<span class="ap ${a.ap === '午前' ? 'am' : 'pm'}">${a.ap}</span>${a.hm}`;
+    $('ar_sub').textContent = `${dayLbl ? dayLbl + ' ' : ''}${mdw(due)} ・ 24時間表記 ${a.h24}`;
+    $('ar_left').textContent = left > 0 ? `今から ${durTxt(left)}後` : 'もう過ぎています';
+    $('ar_timer').textContent = left > 0 ? durTxt(left) : '—';
+    $('sheet').querySelectorAll('[data-ar-min]').forEach(b => b.classList.toggle('on', +b.dataset.arMin === min));
+  };
+  openSheet(`
+    <h3 class="fh"><span class="fh-ic" style="background:var(--g-feed)">${ICON.feed}</span>ミルクのアラームを登録</h3>
+    ${failed ? '<div class="stool-warn">このスマホでは、アプリから時計アプリに自動で登録できませんでした。下の時刻を見ながら、時計アプリで設定してください。</div>' : ''}
+    <p class="note">ミルク ${hm(base)} から</p>
+    <div class="tseg">${ALARM_MINS.map(m => `<button data-ar-min="${m}">${minLabel(m)}</button>`).join('')}</div>
+    <div class="ar-big"><div class="ar-time" id="ar_time"></div><div class="ar-sub" id="ar_sub"></div><div class="ar-left" id="ar_left"></div></div>
+    <button class="primary ar-go" id="ar_go">時計アプリに登録する</button>
+    <p class="note small">押すと時計アプリが開いて、この時刻のアラームが入った状態になります（スマホによっては開かないことがあります）。</p>
+    <div class="ar-manual">
+      <b>自分で設定するときは</b>
+      <span>アラーム：<em id="ar_time2"></em></span>
+      <span>タイマーなら：<em id="ar_timer"></em></span>
+    </div>
+    <div class="btns"><button class="ghost" id="ar_close">閉じる</button></div>`);
+  const sync = () => { draw(); const a = ampm(base + min * MIN); $('ar_time2').textContent = `${a.ap} ${a.hm}（${a.h24}）`; };
+  $('sheet').querySelectorAll('[data-ar-min]').forEach(b => b.onclick = () => { min = +b.dataset.arMin; sync(); });
+  $('ar_close').onclick = closeSheet;
+  $('ar_go').onclick = () => {
+    const d = new Date(base + min * MIN);
+    if(d.getTime() <= Date.now()){ toast('その時刻はもう過ぎています'); return; }
+    const fb = location.origin + location.pathname + '?alarm=ng';
+    const url = 'intent:#Intent;action=android.intent.action.SET_ALARM;'
+      + `i.android.intent.extra.alarm.HOUR=${d.getHours()};`
+      + `i.android.intent.extra.alarm.MINUTES=${d.getMinutes()};`
+      + `S.android.intent.extra.alarm.MESSAGE=${encodeURIComponent('ミルク（育児ログ）')};`
+      + 'B.android.intent.extra.alarm.SKIP_UI=false;'
+      + `S.browser_fallback_url=${encodeURIComponent(fb)};end`;
+    location.href = url;
+  };
+  sync();
+}
+
 /* ---------- 母乳タイマー（左右それぞれ） ---------- */
 // 開始時刻を端末に保存するので、アプリを閉じたり画面が消えても時間はずれない
 const BT_KEY = 'babylog_btimer';
@@ -987,7 +1048,8 @@ function quickFeed(sub){
   if(sub === 'ミルク'){
     actionToast(`${describe(ev)}を記録しました`, [
       { label: '取り消す', fn: undo(ev.id) },
-      { label: '編集する', fn: () => editLater(ev.id) }
+      { label: '編集する', fn: () => editLater(ev.id) },
+      { label: '⏰ アラーム', fn: () => openAlarmSheet(ev.t) }
     ]);
   } else {
     // 母乳はどちらの胸かをワンタップで残せる
