@@ -965,7 +965,8 @@ function openBreastTimer(){
     const l = btElapsed(st, '左'), r = btElapsed(st, '右');
     if(l + r < 1000) return;
     const lSec = Math.round(l / 1000), rSec = Math.round(r / 1000);
-    const ev = { id: uid(), type: 'feed', t: st.start, sub: '母乳', amount: secMin(lSec + rSec),
+    // 記録の時刻は「完了して記録」を押した時刻（終わった時刻）。始めた時刻は startT に残す
+    const ev = { id: uid(), type: 'feed', t: Date.now(), startT: st.start, sub: '母乳', amount: secMin(lSec + rSec),
       side: lSec && rSec ? '両方' : lSec ? '左' : '右', lSec, rSec, endSide: st.endSide };
     putEvent(ev);
     btSave(null);
