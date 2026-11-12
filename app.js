@@ -832,7 +832,10 @@ function ampm(t){
   const d = new Date(t), h = d.getHours();
   return { ap: h < 12 ? '午前' : '午後', hm: `${h % 12}:${pad(d.getMinutes())}`, h24: `${h}:${pad(d.getMinutes())}` };
 }
+const ALARM_NG_KEY = 'babylog_alarm_intent_ng';   // この端末では時計アプリに登録できなかった
 function openAlarmSheet(baseT, failed = false){
+  let ng = false;
+  try{ if(failed) localStorage.setItem(ALARM_NG_KEY, '1'); ng = localStorage.getItem(ALARM_NG_KEY) === '1'; }catch(e){}
   const milks = S.events.filter(isMilk);
   const base = baseT || milks[milks.length - 1]?.t || Date.now();
   let min = alarmCfg().min;
@@ -850,11 +853,12 @@ function openAlarmSheet(baseT, failed = false){
   openSheet(`
     <h3 class="fh"><span class="fh-ic" style="background:var(--g-feed)">${ICON.feed}</span>ミルクのアラームを登録</h3>
     ${failed ? '<div class="stool-warn">このスマホでは、アプリから時計アプリに自動で登録できませんでした。下の時刻を見ながら、時計アプリで設定してください。</div>' : ''}
+    ${ng && !failed ? '<p class="note">下の時刻を見ながら、時計アプリでアラームかタイマーを設定してください。</p>' : ''}
     <p class="note">ミルク ${hm(base)} から</p>
     <div class="tseg">${ALARM_MINS.map(m => `<button data-ar-min="${m}">${minLabel(m)}</button>`).join('')}</div>
     <div class="ar-big"><div class="ar-time" id="ar_time"></div><div class="ar-sub" id="ar_sub"></div><div class="ar-left" id="ar_left"></div></div>
-    <button class="primary ar-go" id="ar_go">時計アプリに登録する</button>
-    <p class="note small">押すと時計アプリが開いて、この時刻のアラームが入った状態になります（スマホによっては開かないことがあります）。</p>
+    ${ng ? '' : `<button class="primary ar-go" id="ar_go">時計アプリに登録する</button>
+    <p class="note small">押すと時計アプリが開いて、この時刻のアラームが入った状態になります（スマホによっては開かないことがあります）。</p>`}
     <div class="ar-manual">
       <b>自分で設定するときは</b>
       <span>アラーム：<em id="ar_time2"></em></span>
@@ -864,7 +868,7 @@ function openAlarmSheet(baseT, failed = false){
   const sync = () => { draw(); const a = ampm(base + min * MIN); $('ar_time2').textContent = `${a.ap} ${a.hm}（${a.h24}）`; };
   $('sheet').querySelectorAll('[data-ar-min]').forEach(b => b.onclick = () => { min = +b.dataset.arMin; sync(); });
   $('ar_close').onclick = closeSheet;
-  $('ar_go').onclick = () => {
+  if($('ar_go')) $('ar_go').onclick = () => {
     const d = new Date(base + min * MIN);
     if(d.getTime() <= Date.now()){ toast('その時刻はもう過ぎています'); return; }
     const fb = location.origin + location.pathname + '?alarm=ng';
