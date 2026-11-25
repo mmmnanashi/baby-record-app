@@ -114,6 +114,7 @@ const S = {
   familyId: null,
   baby: {name:'', birth:''},
   milton: null,     // ミルトン（消毒液）を最後に交換した時刻 {t, by}
+  notes: {},        // 家族のメモ（日時に結びつかないメモ） {id: {text, pinned, by, t}}
   tasks: {},        // 短期間の予定 {id: {name, freq, every, time, start, end, done:{日付:{t,by}}}}
   members: {},     // uid -> {name, photo}
   events: [],
@@ -169,7 +170,7 @@ $('loginBtn').onclick = async () => {
 onAuthStateChanged(auth, async user => {
   stopListeners();
   S.user = user;
-  S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.milton = null; S.tasks = {}; S.ready = false;
+  S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.milton = null; S.tasks = {}; S.notes = {}; S.ready = false;
   if(!user){ showScreen('login'); return; }
   showScreen('loading');
   try{
@@ -349,6 +350,7 @@ function startFamily(fid){
     S.baby = snap.data()?.baby || {name:'', birth:''};
     S.milton = snap.data()?.milton || null;
     S.tasks = snap.data()?.tasks || {};
+    S.notes = snap.data()?.notes || {};
     gotFamily = true; ready();
   }, onErr));
 
@@ -447,6 +449,7 @@ function renderToday(){
     </div>
     <p class="act-hint">タップですぐ記録（母乳はタイマー） ・ <b>長押し</b>で詳しく入力</p>
     ${tasksHTML()}
+    ${notesHTML()}
     ${miltonHTML()}
     <div class="stats">
       <div class="stat"><div class="k">今日の授乳</div><div class="v">${feedSessions(list).length}<small>回</small></div><div class="d">ミルク${todayMilk}回 ${milk}ml ・ 母乳${todayBreast}回</div></div>
@@ -466,9 +469,85 @@ function renderToday(){
   if($('btBanner')){ $('btBanner').onclick = openBreastTimer; btTick(); }
   if($('mt_done')) $('mt_done').onclick = miltonDone;
   bindTasks($('v-today'));
+  bindNotes($('v-today'));
   if($('mt_edit')) $('mt_edit').onclick = miltonEdit;
   $('v-today').querySelectorAll('[data-ev]').forEach(li => li.onclick = () => openForm(null, li.dataset.ev));
 }
+/* ---------- 家族のメモ（ずっと残しておくメモ） ---------- */
+// 例：ミルクの作り方、病院の電話番号、健診で聞きたいこと。家族の情報に保存して共有
+let notesOpen = false;
+function noteList(){
+  return Object.entries(S.notes || {})
+    .map(([id, n]) => ({ id, ...n }))
+    .filter(n => n && typeof n.text === 'string' && n.text.trim())
+    .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.t || 0) - (a.t || 0));
+}
+// 電話番号とURLはタップできるようにする（先にエスケープしてからリンクにする）
+function linkify(text){
+  return esc(text)
+    .replace(/https?:\/\/[^\s<]+/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`)
+    .replace(/(#8000|#7119|0\d{1,4}-\d{1,4}-\d{3,4}|0\d{9,10})/g, t => `<a href="tel:${t.replace(/#/g, '%23').replace(/-/g, '')}">${t}</a>`)
+    .replace(/\n/g, '<br>');
+}
+function noteWhen(n){
+  if(!n.t) return '';
+  const d = new Date(n.t);
+  const day = startOfDay(n.t) === startOfDay(Date.now()) ? '今日' : `${d.getMonth() + 1}/${d.getDate()}`;
+  return `${day} ${hm(n.t)}${whoName(n.by) ? ' ・ ' + esc(whoName(n.by)) : ''}`;
+}
+function notesHTML(){
+  const list = noteList();
+  if(!list.length) return `<button class="task-add-empty" id="n_add"><span>${ICON.memo}</span>家族のメモを追加<small>ミルクの作り方・病院の電話番号・健診で聞きたいことなど、ずっと残しておきたいこと</small></button>`;
+  const shown = notesOpen ? list : list.slice(0, 3);
+  return `<div class="card notes">
+    <div class="tasks-head"><h3>家族のメモ</h3><button class="t-add" id="n_add">＋ 追加</button></div>
+    <ul class="notelist">${shown.map(n => `
+      <li class="note-item${n.pinned ? ' pinned' : ''}" data-note="${esc(n.id)}">
+        <div class="note-text">${n.pinned ? '<span class="pin">📌</span>' : ''}${linkify(n.text)}</div>
+        <small>${noteWhen(n)}</small>
+      </li>`).join('')}
+    </ul>
+    ${list.length > 3 ? `<button class="note-more" id="n_more">${notesOpen ? '閉じる' : `すべて見る（${list.length}件）`}</button>` : ''}
+  </div>`;
+}
+function bindNotes(root){
+  if($('n_add')) $('n_add').onclick = () => openNoteForm(null);
+  if($('n_more')) $('n_more').onclick = () => { notesOpen = !notesOpen; renderToday(); };
+  root.querySelectorAll('[data-note]').forEach(li => li.onclick = e => {
+    if(e.target.closest('a')) return;   // 電話番号やリンクをタップしたときは編集を開かない
+    openNoteForm(li.dataset.note);
+  });
+}
+function openNoteForm(id){
+  const n = id ? S.notes[id] : null;
+  const nid = id || uid();
+  openSheet(`
+    <h3 class="fh"><span class="fh-ic" style="background:var(--g-memo)">${ICON.memo}</span>家族のメモを${n ? '編集' : '追加'}</h3>
+    <p class="note">家族みんなの画面に表示されます。電話番号を書くと、タップで電話をかけられます。</p>
+    <textarea id="n_text" class="note-ta" maxlength="2000" placeholder="例：ミルク 1回120ml（お湯70℃で作って人肌まで冷ます）&#10;○○小児科 03-1234-5678">${esc(n?.text || '')}</textarea>
+    <label class="sw-row"><span>📌 上に固定する<small>固定したメモは、いつも一番上に表示されます</small></span><input type="checkbox" id="n_pin" ${n?.pinned ? 'checked' : ''}></label>
+    ${n ? `<p class="note small">最後の更新：${noteWhen(n)}</p>` : ''}
+    <div class="btns">${n ? '<button class="danger" id="n_del">削除</button>' : ''}<button class="ghost" id="n_cancel">やめる</button><button class="primary" id="n_save">保存</button></div>`);
+  $('n_cancel').onclick = closeSheet;
+  $('n_save').onclick = () => {
+    const text = $('n_text').value.replace(/\s+$/, '');
+    if(!text.trim()){ toast('メモを入れてね'); return; }
+    updateDoc(doc(fs, 'families', S.familyId), {
+      [`notes.${nid}`]: { text: text.slice(0, 2000), pinned: $('n_pin').checked, by: S.user.uid, t: Date.now() }
+    }).catch(e => { console.error(e); toast('保存に失敗しました'); });
+    closeSheet();
+    toast(n ? 'メモを更新しました ✓' : 'メモを追加しました ✓');
+  };
+  if($('n_del')) $('n_del').onclick = () => {
+    if(!confirm('このメモを削除しますか？（家族全員の画面から消えます）')) return;
+    updateDoc(doc(fs, 'families', S.familyId), { [`notes.${nid}`]: deleteField() })
+      .catch(e => { console.error(e); toast('削除に失敗しました'); });
+    closeSheet();
+    toast('メモを削除しました');
+  };
+  setTimeout(() => $('n_text')?.focus(), 50);
+}
+
 /* ---------- 短期間の予定（へその緒のお手入れ・お薬など） ---------- */
 const FREQ = { daily: '毎日', weekly: '週1回', interval: '数日おき', once: '1回だけ' };
 const FREQ_KEY = Object.fromEntries(Object.entries(FREQ).map(([k, v]) => [v, k]));
@@ -1620,7 +1699,7 @@ async function leaveFamily(){
     stopListeners();
     await deleteDoc(doc(fs, 'families', fid, 'members', S.user.uid));
     await setDoc(doc(fs, 'users', S.user.uid), { familyId: null });
-    S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.milton = null; S.tasks = {}; S.ready = false;
+    S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.milton = null; S.tasks = {}; S.notes = {}; S.ready = false;
     renderOnboard();
     showScreen('onboard');
     toast('家族から抜けました');
