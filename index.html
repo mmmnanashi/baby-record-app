@@ -403,6 +403,46 @@ button.rail-row:active{background:var(--bg)}
 .sheet .note-ta{min-height:180px}
 .sheet .sw-row{display:flex;align-items:center}
 .sheet .sw-row input{width:22px;height:22px;margin:0;padding:0;flex-shrink:0}
+
+/* おむつ比較 */
+.brand-pill{display:flex;align-items:center;gap:8px;width:100%;margin-top:10px;border:0;border-radius:16px;background:rgba(255,255,255,.75);padding:7px 12px;font-family:inherit;font-size:13px;color:var(--ink);cursor:pointer;text-align:left}
+.brand-pill .ic{width:26px;height:26px;flex-shrink:0}
+.brand-pill span{flex:1;min-width:0}
+.brand-pill i{font-style:normal;color:#2fa77e;font-weight:700;font-size:12px}
+.dtag{display:inline-block;font-size:10.5px;font-weight:700;background:#e3f7ee;color:#2a8a68;border-radius:999px;padding:0 7px;margin-left:2px;vertical-align:1px}
+.dtag.warn{background:#ffe6ec;color:#d8456d}
+.flags{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.flags.compact{flex-direction:row;flex-wrap:wrap;gap:6px}
+.flag{border:2px solid var(--line);background:var(--card);border-radius:14px;padding:10px 12px;text-align:left;cursor:pointer;font-family:inherit;color:var(--ink)}
+.flags.compact .flag{padding:7px 12px;border-radius:999px}
+.flag b{display:block;font-size:14px}
+.flags.compact .flag b{font-size:13px}
+.flag small{display:block;font-size:11.5px;color:var(--sub);margin-top:2px}
+.flag.on{border-color:#ff6b8b;background:#fff0f3}
+.flag.on b::before{content:'✓ ';color:#ff6b8b}
+.brand-list{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.brand-row{display:flex;gap:6px}
+.brand-pick{flex:1;border:2px solid var(--line);background:var(--card);border-radius:14px;padding:12px;font-size:15px;font-weight:700;text-align:left;cursor:pointer;font-family:inherit;color:var(--ink)}
+.brand-row.on .brand-pick,.brand-pick.none.on{border-color:#2fd19a;background:#eafaf3}
+.brand-pick.none{font-weight:400;font-size:13px;color:var(--sub)}
+.brand-del{width:44px;border:0;border-radius:14px;background:var(--bg);color:var(--sub);font-size:18px;cursor:pointer}
+.brand-add{display:flex;gap:8px;margin-top:6px}
+.brand-add input{flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:12px;font-size:16px;font-family:inherit;background:#fffdfb;color:var(--ink)}
+.brand-add button{border:0;border-radius:12px;padding:0 16px;font-weight:700;cursor:pointer;font-family:inherit}
+.cmp-wrap{overflow-x:auto;margin:4px -4px 0}
+.cmp{width:100%;border-collapse:separate;border-spacing:4px;font-size:12.5px}
+.cmp th{font-weight:700;text-align:center;color:var(--ink);white-space:nowrap;padding:4px}
+.cmp tbody th{text-align:left;font-weight:600;color:var(--sub);font-size:11.5px;white-space:normal;min-width:72px}
+.cmp td{background:var(--bg);border-radius:10px;text-align:center;padding:6px 4px;font-weight:700;font-variant-numeric:tabular-nums}
+.cmp td small{display:block;font-size:10px;font-weight:400;color:var(--sub)}
+.cmp td.best{background:#dff7ec;color:#1f7d5c;box-shadow:inset 0 0 0 2px #7fdcb6}
+[data-theme="night"] .brand-pill{background:rgba(42,37,68,.8)}
+[data-theme="night"] .dtag{background:#24423a;color:#8fe0bf}
+[data-theme="night"] .dtag.warn{background:#4a2a3a;color:#ffadc0}
+[data-theme="night"] .flag.on{background:#4a2a3a}
+[data-theme="night"] .brand-row.on .brand-pick,[data-theme="night"] .brand-pick.none.on{background:#24423a;border-color:#3fae88}
+[data-theme="night"] .brand-add input{background:#1d1930}
+[data-theme="night"] .cmp td.best{background:#24423a;color:#8fe0bf;box-shadow:inset 0 0 0 2px #3fae88}
 </style>
 </head>
 <body data-screen="loading">

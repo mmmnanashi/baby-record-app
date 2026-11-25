@@ -114,6 +114,7 @@ const S = {
   familyId: null,
   baby: {name:'', birth:''},
   milton: null,     // ミルトン（消毒液）を最後に交換した時刻 {t, by}
+  diaperBrands: null, diaperBrand: '',   // おむつ比較：ブランドの一覧と、今使っているブランド
   notes: {},        // 家族のメモ（日時に結びつかないメモ） {id: {text, pinned, by, t}}
   tasks: {},        // 短期間の予定 {id: {name, freq, every, time, start, end, done:{日付:{t,by}}}}
   members: {},     // uid -> {name, photo}
@@ -170,7 +171,7 @@ $('loginBtn').onclick = async () => {
 onAuthStateChanged(auth, async user => {
   stopListeners();
   S.user = user;
-  S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.milton = null; S.tasks = {}; S.notes = {}; S.ready = false;
+  S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.milton = null; S.tasks = {}; S.notes = {}; S.diaperBrands = null; S.diaperBrand = ''; S.ready = false;
   if(!user){ showScreen('login'); return; }
   showScreen('loading');
   try{
@@ -351,6 +352,8 @@ function startFamily(fid){
     S.milton = snap.data()?.milton || null;
     S.tasks = snap.data()?.tasks || {};
     S.notes = snap.data()?.notes || {};
+    S.diaperBrands = snap.data()?.diaperBrands || null;
+    S.diaperBrand = snap.data()?.diaperBrand || '';
     gotFamily = true; ready();
   }, onErr));
 
@@ -408,7 +411,9 @@ function describe(e){
       const c = stoolOf(e.color);
       return esc(e.sub || 'おむつ')
         + (c ? ` <span class="sw" style="background:${c[1]}"></span>便色${c[0]}` : '')
-        + (e.stool ? `・${esc(e.stool)}` : '');
+        + (e.stool ? `・${esc(e.stool)}` : '')
+        + (e.brand ? ` <span class="dtag">${esc(e.brand)}</span>` : '')
+        + DFLAGS.filter(([k]) => e[k]).map(([, l]) => ` <span class="dtag warn">${l}</span>`).join('');
     }
     case 'temp':   return `${esc(e.value)}℃`;
     case 'memo':   return esc(e.memo?.slice(0, 30) || 'メモ');
@@ -448,6 +453,7 @@ function renderToday(){
       <button class="act" style="background:var(--g-memo)" data-act="memo"><b>${ICON.memo}</b><span class="al">メモ<small>入力</small></span></button>
     </div>
     <p class="act-hint">タップですぐ記録（母乳はタイマー） ・ <b>長押し</b>で詳しく入力</p>
+    <button class="brand-pill" id="brandPill">${ICON.diaper}<span>${S.diaperBrand ? `おむつ：<b>${esc(S.diaperBrand)}</b>` : '使っているおむつを選ぶ（比較用）'}</span><i>変更 ›</i></button>
     ${tasksHTML()}
     ${notesHTML()}
     ${miltonHTML()}
@@ -470,6 +476,7 @@ function renderToday(){
   if($('mt_done')) $('mt_done').onclick = miltonDone;
   bindTasks($('v-today'));
   bindNotes($('v-today'));
+  if($('brandPill')) $('brandPill').onclick = openBrandSheet;
   if($('mt_edit')) $('mt_edit').onclick = miltonEdit;
   $('v-today').querySelectorAll('[data-ev]').forEach(li => li.onclick = () => openForm(null, li.dataset.ev));
 }
@@ -1031,10 +1038,12 @@ function quickFeed(sub){
 }
 function quickDiaper(){
   const ev = { id: uid(), type: 'diaper', t: Date.now(), sub: 'おしっこ' };
+  if(S.diaperBrand) ev.brand = S.diaperBrand;
   putEvent(ev);
   buzz();
   const change = sub => {
-    putEvent({ ...ev, sub });
+    ev.sub = sub;
+    putEvent({ ...ev });
     const age = babyAge();
     if(!age || age.days <= 135){
       actionToast(`「${sub}」に変更しました。うんちの色も記録できます`, [
@@ -1043,11 +1052,80 @@ function quickDiaper(){
       ]);
     } else toast(`「${sub}」に変更しました ✓`);
   };
-  actionToast('おむつ（おしっこ）を記録しました', [
+  actionToast(`おむつ（おしっこ${ev.brand ? '・' + ev.brand : ''}）を記録しました`, [
     { label: '取り消す', fn: undo(ev.id) },
-    { label: 'うんちに変更', fn: () => change('うんち') },
-    { label: '両方', fn: () => change('両方') }
+    { label: 'うんち', fn: () => change('うんち') },
+    { label: '両方', fn: () => change('両方') },
+    { label: '⚠ 気になる', fn: () => openDiaperFlags(ev) }
   ]);
+}
+// 漏れた・サインが分かりにくい・かぶれ をタップで残す
+function openDiaperFlags(ev){
+  const f = Object.fromEntries(DFLAGS.map(([k]) => [k, !!ev[k]]));
+  openSheet(`
+    <h3 class="fh"><span class="fh-ic" style="background:var(--g-diaper)">${ICON.diaper}</span>おむつで気になったこと</h3>
+    <p class="note">${ev.brand ? esc(ev.brand) + 'のおむつ ・ ' : ''}当てはまるものをタップ（いくつでも）</p>
+    <div class="flags">${DFLAGS.map(([k, l, d]) => `<button type="button" class="flag${f[k] ? ' on' : ''}" data-flag="${k}"><b>${l}</b><small>${d}</small></button>`).join('')}</div>
+    <div class="btns"><button class="ghost" id="df_cancel">やめる</button><button class="primary" id="df_save">保存</button></div>`);
+  $('sheet').querySelectorAll('[data-flag]').forEach(b => b.onclick = () => { f[b.dataset.flag] = !f[b.dataset.flag]; b.classList.toggle('on', f[b.dataset.flag]); });
+  $('df_cancel').onclick = closeSheet;
+  $('df_save').onclick = () => {
+    DFLAGS.forEach(([k]) => { if(f[k]) ev[k] = true; else delete ev[k]; });
+    putEvent({ ...ev });
+    closeSheet();
+    toast('保存しました ✓');
+  };
+}
+
+/* ---------- おむつ比較：ブランドの選択 ---------- */
+const DFLAGS = [
+  ['leak', '漏れた', 'おしっこ・うんちが外に漏れた'],
+  ['signHard', 'サインが分かりにくい', 'おしっこサインで、したか分かりにくかった'],
+  ['rash', 'かぶれ・赤み', 'おむつのあたりが赤くなった']
+];
+const brandList = () => Array.isArray(S.diaperBrands) ? S.diaperBrands : ['パンパース', 'グーン', 'メリーズ'];
+function openBrandSheet(){
+  const list = brandList();
+  openSheet(`
+    <h3 class="fh"><span class="fh-ic" style="background:var(--g-diaper)">${ICON.diaper}</span>使っているおむつ</h3>
+    <p class="note">選んでおくと、おむつの記録に自動でブランドが付きます。家族みんなに反映されます。</p>
+    <div class="brand-list">${list.map(b => `
+      <div class="brand-row${S.diaperBrand === b ? ' on' : ''}">
+        <button class="brand-pick" data-brand="${esc(b)}">${S.diaperBrand === b ? '✓ ' : ''}${esc(b)}</button>
+        <button class="brand-del" data-del="${esc(b)}" aria-label="${esc(b)}を一覧から消す">×</button>
+      </div>`).join('')}
+      <button class="brand-pick none${!S.diaperBrand ? ' on' : ''}" data-brand="">${!S.diaperBrand ? '✓ ' : ''}選ばない（比較しない）</button>
+    </div>
+    <div class="lbl">ブランドを追加</div>
+    <div class="brand-add"><input id="br_new" maxlength="20" placeholder="例：ムーニー"><button class="ghost" id="br_add">追加</button></div>
+    <div class="btns"><button class="ghost" id="br_close">閉じる</button></div>`);
+  const save = data => updateDoc(doc(fs, 'families', S.familyId), data).catch(e => { console.error(e); toast('保存に失敗しました'); });
+  $('sheet').querySelectorAll('[data-brand]').forEach(b => b.onclick = () => {
+    const v = b.dataset.brand;
+    S.diaperBrand = v;   // すぐ画面に反映（保存の完了を待たない）
+    save({ diaperBrand: v, diaperBrands: list });
+    closeSheet(); render();
+    toast(v ? `おむつを「${v}」にしました ✓` : 'おむつのブランドを選ばない設定にしました');
+  });
+  $('sheet').querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+    const v = b.dataset.del;
+    if(!confirm(`「${v}」を一覧から消しますか？（これまでの記録は残ります）`)) return;
+    const nl = list.filter(x => x !== v);
+    S.diaperBrands = nl;
+    if(S.diaperBrand === v) S.diaperBrand = '';
+    save({ diaperBrands: nl, diaperBrand: S.diaperBrand });
+    openBrandSheet();
+  });
+  $('br_add').onclick = () => {
+    const v = $('br_new').value.trim();
+    if(!v){ toast('ブランド名を入れてね'); return; }
+    if(list.includes(v)){ toast('もう一覧にあります'); return; }
+    const nl = [...list, v];
+    S.diaperBrands = nl;
+    save({ diaperBrands: nl });
+    openBrandSheet();
+  };
+  $('br_close').onclick = closeSheet;
 }
 function quickSleep(){
   const on = S.events.find(e => e.type === 'sleep' && !e.end);
@@ -1068,7 +1146,7 @@ function quickSleep(){
 /* ---------- 記録フォーム ---------- */
 const amtLabel = () => F.type === 'temp' ? '体温 (℃)' : (F.sub === 'ミルク' ? '量 (ml)' : '合計の時間 (分)');
 function seg(key, opts, cur){
-  return `<div class="seg" data-k="${key}">${opts.map(o => `<button type="button" data-v="${o}" class="${o === cur ? 'on' : ''}">${o}</button>`).join('')}</div>`;
+  return `<div class="seg" data-k="${key}">${opts.map(o => `<button type="button" data-v="${esc(o)}" class="${o === cur ? 'on' : ''}">${esc(o)}</button>`).join('')}</div>`;
 }
 document.addEventListener('click', e => {
   const b = e.target.closest('.seg button');
@@ -1089,6 +1167,8 @@ function openForm(type, id, preset = {}){
   const e = ev || {};
   F = {type, id: e.id || null, by: e.by || null, sub: e.sub || preset.sub || ({feed:'母乳', diaper:'おしっこ'}[type] || null),
        color: stoolOf(e.color) ? Number(e.color) : null, stool: e.stool || null, side: e.side || null, returnDay,
+       brand: id ? (e.brand || 'なし') : (S.diaperBrand || 'なし'),
+       flags: Object.fromEntries(DFLAGS.map(([k]) => [k, !!e[k]])),
        keep: { startT: e.startT, endSide: e.endSide }};
 
   const brst = type === 'feed' && F.sub !== 'ミルク';
@@ -1109,6 +1189,10 @@ function openForm(type, id, preset = {}){
   }
   if(type === 'diaper'){
     h += seg('sub', ['おしっこ','うんち','両方'], F.sub);
+    const bl = brandList().includes(F.brand) || F.brand === 'なし' ? brandList() : [...brandList(), F.brand];
+    h += `<div class="lbl">おむつのブランド</div>${seg('brand', [...bl, 'なし'], F.brand)}
+      <div class="lbl">気になったこと（任意）</div>
+      <div class="flags compact">${DFLAGS.map(([k, l]) => `<button type="button" class="flag${F.flags[k] ? ' on' : ''}" data-flag="${k}"><b>${l}</b></button>`).join('')}</div>`;
     h += `<div id="poopBox" ${F.sub === 'おしっこ' ? 'hidden' : ''}>
       <div class="lbl">うんちの色（便色カード）</div>
       <div class="stool-colors">${STOOL.map(([n, c, l]) =>
@@ -1132,6 +1216,7 @@ function openForm(type, id, preset = {}){
   h += `<div class="btns">${ev ? '<button class="danger" id="f_del">削除</button>' : ''}<button class="ghost" id="f_cancel">やめる</button><button class="primary" id="f_save">保存</button></div>`;
   openSheet(h);
   $('f_save').onclick = saveForm;
+  $('sheet').querySelectorAll('[data-flag]').forEach(b => b.onclick = () => { F.flags[b.dataset.flag] = !F.flags[b.dataset.flag]; b.classList.toggle('on', F.flags[b.dataset.flag]); });
   // 左右の時間を入れたら、合計と「どちらの胸」を自動で合わせる
   const lrSync = () => {
     const l = +$('f_l').value || 0, r = +$('f_r').value || 0;
@@ -1204,6 +1289,8 @@ function saveForm(){
   }
   if(F.type === 'diaper'){
     ev.sub = F.sub;
+    if(F.brand && F.brand !== 'なし') ev.brand = F.brand;
+    DFLAGS.forEach(([k]) => { if(F.flags?.[k]) ev[k] = true; });
     if(F.sub !== 'おしっこ'){
       if(stoolOf(F.color)) ev.color = F.color;
       if(F.stool) ev.stool = F.stool;
@@ -1339,6 +1426,7 @@ function renderStats(){
     ${barsHTML(ICON.diaper, 'おむつ回数（回/日）', rows, 'diaper', 'var(--diaper)', v => v)}
     ${barsHTML(ICON.diaper, 'うんち回数（回/日）', rows, 'poop', 'var(--poop)', v => v)}
     ${stoolColorHTML(start)}
+    ${diaperCompareHTML(start)}
     <div class="card">
       <h3>1日の流れ</h3>
       <p class="note small">日付をタップすると、その日の記録をくわしく見られます</p>
@@ -1350,6 +1438,70 @@ function renderStats(){
   $('v-stats').querySelectorAll('[data-range]').forEach(b => b.onclick = () => { rangeDays = +b.dataset.range; render(); });
   $('v-stats').querySelectorAll('[data-day]').forEach(b => b.onclick = () => openDay(+b.dataset.day));
 }
+// おむつ比較（ブランドごと）。気になった点は、そのとき外したおむつ＝使っていたブランドのこととして数える
+function diaperCompareHTML(start){
+  const all = S.events.filter(e => e.type === 'diaper').sort((a, b) => a.t - b.t);
+  const inR = all.filter(e => e.t >= start);
+  const brands = [...new Set(inR.filter(e => e.brand).map(e => e.brand))];
+  const head = `<h3 class="h-ic"><span>${ICON.diaper}</span>おむつ比較（${rangeDays}日間）</h3>`;
+  if(!brands.length) return `<div class="card">${head}<p class="note">今日の画面の「使っているおむつを選ぶ」でブランドを選ぶと、おむつの記録に自動でブランドが付いて、ここで比べられます。</p></div>`;
+  const nightH = h => h >= 20 || h < 4;
+  const st = brands.map(b => {
+    const L = inR.filter(e => e.brand === b);
+    const poop = L.filter(isPoop);
+    const gaps = [];
+    let nightLeak = 0;
+    for(let i = 1; i < all.length; i++){
+      const prev = all[i - 1], cur = all[i];
+      if(cur.t < start || cur.brand !== b) continue;
+      const gap = cur.t - prev.t;
+      if(nightH(new Date(prev.t).getHours()) && gap <= 12 * HOUR && gap >= 20 * MIN){
+        gaps.push(gap);
+        if(cur.leak) nightLeak++;
+      }
+    }
+    return {
+      b, n: L.length,
+      leak: L.filter(e => e.leak).length,
+      poopN: poop.length, poopLeak: poop.filter(e => e.leak).length,
+      sign: L.filter(e => e.signHard).length,
+      rash: L.filter(e => e.rash).length,
+      nightN: gaps.length, nightLeak,
+      nightAvg: gaps.length ? gaps.reduce((a, x) => a + x, 0) / gaps.length : null,
+      nightMax: gaps.length ? Math.max(...gaps) : null
+    };
+  });
+  const enough = st.length > 1 && st.every(x => x.n >= 3);
+  const pct = (k, n) => n ? Math.round(k / n * 100) : null;
+  const rows = [
+    ['使った回数', x => `${x.n}回`, null],
+    ['漏れた', x => x.n ? `${pct(x.leak, x.n)}%<small>${x.leak}/${x.n}回</small>` : '—', x => x.n ? x.leak / x.n : null, 'min'],
+    ['うんちの時の漏れ', x => x.poopN ? `${pct(x.poopLeak, x.poopN)}%<small>${x.poopLeak}/${x.poopN}回</small>` : '—', x => x.poopN ? x.poopLeak / x.poopN : null, 'min'],
+    ['サインが分かりにくい', x => x.n ? `${pct(x.sign, x.n)}%<small>${x.sign}/${x.n}回</small>` : '—', x => x.n ? x.sign / x.n : null, 'min'],
+    ['かぶれ・赤み', x => `${x.rash}回`, x => x.n ? x.rash / x.n : null, 'min'],
+    ['夜のもち（平均）', x => x.nightAvg ? `${durTxt(x.nightAvg)}<small>最長 ${durTxt(x.nightMax)}</small>` : '—', x => x.nightN >= 2 ? x.nightAvg : null, 'max'],
+    ['夜の漏れ', x => x.nightN ? `${pct(x.nightLeak, x.nightN)}%<small>${x.nightLeak}/${x.nightN}回</small>` : '—', x => x.nightN >= 2 ? x.nightLeak / x.nightN : null, 'min']
+  ];
+  const best = (f, dir) => {
+    if(!enough || !f) return null;
+    const vals = st.map(f);
+    if(vals.some(v => v === null)) return null;
+    const target = dir === 'max' ? Math.max(...vals) : Math.min(...vals);
+    if(vals.every(v => v === target)) return null;   // 差がないときは印を付けない
+    return vals.map(v => v === target);
+  };
+  return `<div class="card">${head}
+    <div class="cmp-wrap"><table class="cmp">
+      <thead><tr><th></th>${st.map(x => `<th>${esc(x.b)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(([label, show, f, dir]) => {
+        const bm = best(f, dir);
+        return `<tr><th>${label}</th>${st.map((x, i) => `<td class="${bm && bm[i] ? 'best' : ''}">${show(x)}</td>`).join('')}</tr>`;
+      }).join('')}</tbody>
+    </table></div>
+    <p class="note small">「夜のもち」は、20時〜4時に替えたおむつを次に替えるまでの時間です。${enough ? '緑の欄が、その項目でいちばん良かったブランドです。' : 'それぞれのブランドを3回以上使うと、いちばん良かったものに印が付きます。'}回数が少ないうちは偶然の差のこともあるので、各ブランド2〜3日分くらい使ってから比べるのがおすすめです。</p>
+  </div>`;
+}
+
 // うんちの色と状態の内訳（選んだ期間）
 function stoolColorHTML(start){
   const poops = S.events.filter(e => isPoop(e) && e.t >= start);
@@ -1699,7 +1851,7 @@ async function leaveFamily(){
     stopListeners();
     await deleteDoc(doc(fs, 'families', fid, 'members', S.user.uid));
     await setDoc(doc(fs, 'users', S.user.uid), { familyId: null });
-    S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.milton = null; S.tasks = {}; S.notes = {}; S.ready = false;
+    S.familyId = null; S.events = []; S.members = {}; S.baby = {name:'', birth:''}; S.milton = null; S.tasks = {}; S.notes = {}; S.diaperBrands = null; S.diaperBrand = ''; S.ready = false;
     renderOnboard();
     showScreen('onboard');
     toast('家族から抜けました');
