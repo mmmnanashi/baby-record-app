@@ -412,6 +412,7 @@ function describe(e){
       return esc(e.sub || 'おむつ')
         + (c ? ` <span class="sw" style="background:${c[1]}"></span>便色${c[0]}` : '')
         + (e.stool ? `・${esc(e.stool)}` : '')
+        + (e.enema && e.sub !== 'おしっこ' ? ` <span class="dtag enema">浣腸</span>` : '')
         + (e.brand ? ` <span class="dtag">${esc(e.brand)}</span>` : '')
         + DFLAGS.filter(([k]) => e[k]).map(([, l]) => ` <span class="dtag warn">${l}</span>`).join('');
     }
@@ -960,7 +961,12 @@ function lastPoopHTML(){
   const when = (startOfDay(e.t) === startOfDay(Date.now()) ? '' : `${d.getMonth() + 1}/${d.getDate()} `) + hm(e.t);
   const ago = ms < HOUR ? `${Math.max(0, Math.round(ms / MIN))}分前` : ms < DAY ? `${durTxt(ms)}前` : `${Math.floor(ms / DAY)}日前`;
   const c = stoolOf(e.color);
-  return `<div class="lastpoop">最後のうんち<br><b>${when}</b>${c ? ` <span class="sw" style="background:${c[1]}"></span>` : ''}<small>（${ago}）</small></div>`;
+  let self = '';
+  if(e.enema){
+    const sp = ps.filter(x => !x.enema).pop();
+    self = `<span class="lp-self">浣腸で ・ 自力は${sp ? (startOfDay(sp.t) === startOfDay(Date.now()) ? '今日' : `${Math.max(1, dayDiff(Date.now(), sp.t))}日前`) : '記録なし'}</span>`;
+  }
+  return `<div class="lastpoop">最後のうんち<br><b>${when}</b>${c ? ` <span class="sw" style="background:${c[1]}"></span>` : ''}<small>（${ago}）</small>${self}</div>`;
 }
 function sinceRow(label, e, cls, unit, extra = ''){
   return `<div class="since"><span class="tag tag-${cls}">${label}</span>`
@@ -1045,12 +1051,14 @@ function quickDiaper(){
     ev.sub = sub;
     putEvent({ ...ev });
     const age = babyAge();
+    const enema = { label: '浣腸で出した', fn: () => { ev.enema = true; putEvent({ ...ev }); toast('「浣腸で出した」にしました ✓'); } };
     if(!age || age.days <= 135){
       actionToast(`「${sub}」に変更しました。うんちの色も記録できます`, [
         { label: '色を選ぶ', fn: () => editLater(ev.id) },
+        enema,
         { label: '今はしない', fn: () => {} }
       ]);
-    } else toast(`「${sub}」に変更しました ✓`);
+    } else actionToast(`「${sub}」に変更しました`, [enema, { label: 'OK', fn: () => {} }]);
   };
   actionToast(`おむつ（おしっこ${ev.brand ? '・' + ev.brand : ''}）を記録しました`, [
     { label: '取り消す', fn: undo(ev.id) },
@@ -1168,6 +1176,7 @@ function openForm(type, id, preset = {}){
   F = {type, id: e.id || null, by: e.by || null, sub: e.sub || preset.sub || ({feed:'母乳', diaper:'おしっこ'}[type] || null),
        color: stoolOf(e.color) ? Number(e.color) : null, stool: e.stool || null, side: e.side || null, returnDay,
        brand: id ? (e.brand || 'なし') : (S.diaperBrand || 'なし'),
+       how: e.enema ? '浣腸' : '自力',
        flags: Object.fromEntries(DFLAGS.map(([k]) => [k, !!e[k]])),
        keep: { startT: e.startT, endSide: e.endSide }};
 
@@ -1203,6 +1212,8 @@ function openForm(type, id, preset = {}){
       <p class="note small">画面の色は実物と違って見えることがあります。明るい場所で、母子手帳の便色カードと見比べてください。迷ったら小さい番号を選びます。</p>
       <div class="lbl">うんちの状態（任意）</div>
       ${seg('stool', ['かため','ふつう','やわらかい','水っぽい'], F.stool)}
+      <div class="lbl">出し方</div>
+      ${seg('how', ['自力','浣腸'], F.how)}
     </div>`;
   }
   if(type === 'feed' || type === 'temp'){
@@ -1294,6 +1305,7 @@ function saveForm(){
     if(F.sub !== 'おしっこ'){
       if(stoolOf(F.color)) ev.color = F.color;
       if(F.stool) ev.stool = F.stool;
+      if(F.how === '浣腸') ev.enema = true;
     }
   }
   if(F.type === 'temp'){
@@ -1531,7 +1543,9 @@ function stoolColorHTML(start){
       <p class="note small">色を記録したうんち ${withC.length}回${poops.length > withC.length ? ` ・ 色の記録なし ${poops.length - withC.length}回` : ''}</p>
       ${states.length ? `<div class="lbl">うんちの状態</div><div class="chips">${states.map(([k, v]) => `<span class="chip${k === '水っぽい' ? ' chip-w' : ''}">${k} <b>${v}</b></span>`).join('')}</div>` : ''}`;
   }
-  return `<div class="card"><h3 class="h-ic"><span>${ICON.diaper}</span>うんちの色（${rangeDays}日間）</h3>${body}</div>`;
+  const en = poops.filter(e => e.enema).length;
+  const howH = en ? `<div class="lbl">出し方</div><div class="chips"><span class="chip">自力 <b>${poops.length - en}</b></span><span class="chip chip-e">浣腸 <b>${en}</b></span></div>` : '';
+  return `<div class="card"><h3 class="h-ic"><span>${ICON.diaper}</span>うんちの色（${rangeDays}日間）</h3>${body}${howH}</div>`;
 }
 function barsHTML(icon, title, rows, key, color, fmt){
   const max = Math.max(1, ...rows.map(r => r[key]));
@@ -1627,6 +1641,11 @@ function buildAdvice(){
     add('alert', `うんちの色が便色カード${p.color}番に近い記録があります（${d.getMonth() + 1}/${d.getDate()} ${hm(p.t)}）`,
       '白っぽい・うすい黄色のうんちは、胆道閉鎖症など肝臓の病気のサインのことがあります。まだ受診していなければ、すぐに小児科を受診してください。番号を伝え、うんちのついたおむつを持っていくと確認してもらいやすいです。');
   }
+
+  // 浣腸で出すことが続くとき（直近7日で3回以上）
+  const enemas = S.events.filter(e => isPoop(e) && e.enema && e.t >= now - 7 * DAY).length;
+  if(enemas >= 3) add('info', `浣腸で出すことが続いています（7日間で${enemas}回）`,
+    '自力で出にくい日が続くときは、かかりつけの小児科で相談してみてください。お腹がはって苦しそう、吐く、機嫌が悪い、うんちに血が混じるなどのときは早めに受診を。');
 
   // 水っぽいうんち（24時間で3回以上）
   const watery = S.events.filter(e => e.type === 'diaper' && e.stool === '水っぽい' && e.t >= now - DAY).length;
