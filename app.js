@@ -938,13 +938,15 @@ function openBreastTimer(){
     // 記録の時刻は「完了して記録」を押した時刻（終わった時刻）。始めた時刻は startT に残す
     const ev = { id: uid(), type: 'feed', t: Date.now(), startT: st.start, sub: '母乳', amount: secMin(lSec + rSec),
       side: lSec && rSec ? '両方' : lSec ? '左' : '右', lSec, rSec, endSide: st.endSide };
+    const woke = endSleepAt(st.start);
     putEvent(ev);
     btSave(null);
     closeSheet();
     buzz();
-    actionToast(`${describe(ev)}を記録しました`, [
+    actionToast(`${describe(ev)}を記録しました${woke ? `（睡眠は${hm(st.start)}で終了）` : ''}`, [
       { label: '取り消す', fn: () => { removeEvent(ev.id); toast('取り消しました'); } },
-      { label: '編集する', fn: () => editLater(ev.id) }
+      { label: '編集する', fn: () => editLater(ev.id) },
+      { label: '😴 このまま寝た', fn: startSleepNow }
     ]);
     render();
   };
@@ -989,8 +991,8 @@ function timelineHTML(list, asc = false){
 // ボタン：タップで即記録、授乳とおむつは長押しで入力画面
 function bindActButton(b){
   const t = b.dataset.act;
-  const quick = t === 'breast' || t === 'milk' || t === 'diaper';
-  const longOpen = () => t === 'diaper' ? openForm('diaper') : openForm('feed', null, { sub: t === 'milk' ? 'ミルク' : '母乳' });
+  const quick = t === 'breast' || t === 'milk' || t === 'diaper' || t === 'sleep';
+  const longOpen = () => t === 'sleep' ? openSleepSheet() : t === 'diaper' ? openForm('diaper') : openForm('feed', null, { sub: t === 'milk' ? 'ミルク' : '母乳' });
   let timer = null, long = false;
   if(quick){
     const cancel = () => { clearTimeout(timer); timer = null; b.classList.remove('pressing'); };
@@ -1023,13 +1025,15 @@ function quickFeed(sub){
   const ev = { id: uid(), type: 'feed', t: Date.now(), sub };
   // ミルクは前回の量を引き継ぐ（母乳はタイマーで測るので、時間なしで記録）
   if(sub === 'ミルク' && last?.amount) ev.amount = last.amount;
+  const woke = endSleepAt(ev.t);
   putEvent(ev);
   buzz();
   if(sub === 'ミルク'){
-    actionToast(`${describe(ev)}を記録しました`, [
+    actionToast(`${describe(ev)}を記録しました${woke ? `（睡眠は${hm(ev.t)}で終了）` : ''}`, [
       { label: '取り消す', fn: undo(ev.id) },
       { label: '編集する', fn: () => editLater(ev.id) },
-      { label: '⏰ アラーム', fn: () => openAlarmSheet(ev.t) }
+      { label: '😴 寝た', fn: startSleepNow },
+      { label: '⏰', fn: () => openAlarmSheet(ev.t) }
     ]);
   } else {
     // 母乳はどちらの胸かをワンタップで残せる
@@ -1135,20 +1139,96 @@ function openBrandSheet(){
   };
   $('br_close').onclick = closeSheet;
 }
+const BACK_MINS = [10, 20, 30];
 function quickSleep(){
   const on = S.events.find(e => e.type === 'sleep' && !e.end);
   buzz();
+  const pressed = Date.now();
   if(on){
-    const end = Date.now();
-    putEvent({ ...on, end });
-    actionToast('おはよう ☀️ 睡眠 ' + durTxt(end - on.t), [
-      { label: '取り消す', fn: () => { putEvent({ ...on, end: null }); toast('取り消しました'); } }
+    const ev = { ...on, end: pressed };
+    putEvent(ev);
+    actionToast('おはよう ☀️ 睡眠 ' + durTxt(pressed - on.t) + '（押し忘れたら何分前か選んでね）', [
+      { label: '取り消す', fn: () => { putEvent({ ...on, end: null }); toast('取り消しました'); } },
+      ...BACK_MINS.map(m => ({ label: `${m}分前`, fn: () => {
+        const end = pressed - m * MIN;
+        if(end <= on.t){ toast('寝た時刻より前になってしまいます'); return; }
+        putEvent({ ...ev, end }); toast(`起きた時刻を${hm(end)}にしました ✓`);
+      } }))
     ]);
   } else {
-    const ev = { id: uid(), type: 'sleep', t: Date.now(), end: null };
+    const ev = { id: uid(), type: 'sleep', t: pressed, end: null };
     putEvent(ev);
-    actionToast('おやすみ 🌙 睡眠を記録中', [{ label: '取り消す', fn: undo(ev.id) }]);
+    actionToast('おやすみ 🌙（押し忘れたら何分前に寝たか選んでね）', [
+      { label: '取り消す', fn: undo(ev.id) },
+      ...BACK_MINS.map(m => ({ label: `${m}分前`, fn: () => {
+        const t = pressed - m * MIN;
+        putEvent({ ...ev, t }); toast(`寝た時刻を${hm(t)}にしました ✓`);
+      } }))
+    ]);
   }
+}
+// 授乳を記録したとき、寝ている途中なら「起きた」も入れる（寝てすぐ＝15分以内は、寝かしつけ中の記録とみなして入れない）
+function endSleepAt(t){
+  const on = S.events.find(e => e.type === 'sleep' && !e.end);
+  if(!on || t - on.t < 15 * MIN) return null;
+  putEvent({ ...on, end: t });
+  return on;
+}
+function startSleepNow(){
+  if(S.events.find(e => e.type === 'sleep' && !e.end)){ toast('もう睡眠中になっています'); return; }
+  const ev = { id: uid(), type: 'sleep', t: Date.now(), end: null };
+  putEvent(ev);
+  buzz();
+  actionToast('おやすみ 🌙 睡眠を記録中', [{ label: '取り消す', fn: undo(ev.id) }]);
+}
+// 「寝た」の長押し：押し忘れた睡眠をあとからまとめて入れる（睡眠中なら、その時刻を直す）
+function openSleepSheet(){
+  const on = S.events.find(e => e.type === 'sleep' && !e.end);
+  const now = Date.now();
+  const feeds = S.events.filter(e => e.type === 'feed' && e.t < now);
+  const lf = feeds[feeds.length - 1];
+  const afterFeed = lf && now - lf.t < 8 * HOUR ? lf.t : null;
+  const startDefault = on ? on.t : (afterFeed || now - 30 * MIN);
+  const chipsS = [
+    ...(afterFeed && !on ? [[`授乳のあと（${hm(afterFeed)}）`, afterFeed]] : []),
+    ['30分前', now - 30 * MIN], ['1時間前', now - HOUR], ['2時間前', now - 2 * HOUR], ['3時間前', now - 3 * HOUR]
+  ];
+  openSheet(`
+    <h3 class="fh"><span class="fh-ic" style="background:var(--g-sleep)">${ICON.sleep}</span>${on ? '睡眠の時刻を直す' : '睡眠をあとから記録'}</h3>
+    <p class="note">${on ? `${hm(on.t)}から睡眠中です。押し忘れていたら、寝た時刻を直せます。` : '「寝た」を押し忘れたときに。寝た時刻と起きた時刻を選んでください。'}</p>
+    <div class="lbl">寝た時刻</div>
+    <div class="chips pick">${chipsS.map(([l, t]) => `<button type="button" class="chip" data-st="${t}">${l}</button>`).join('')}</div>
+    <label><input id="sl_start" type="datetime-local" value="${toInput(startDefault)}"></label>
+    <div class="lbl">起きた時刻</div>
+    <div class="chips pick">
+      <button type="button" class="chip" data-en="now">今起きた</button>
+      <button type="button" class="chip" data-en="">まだ寝ている</button>
+    </div>
+    <label><input id="sl_end" type="datetime-local" value="${on ? '' : toInput(now)}"></label>
+    <p class="note small" id="sl_len"></p>
+    <div class="btns"><button class="ghost" id="sl_cancel">やめる</button><button class="primary" id="sl_save">保存</button></div>`);
+  const upd = () => {
+    const a = $('sl_start').value ? new Date($('sl_start').value).getTime() : null;
+    const b = $('sl_end').value ? new Date($('sl_end').value).getTime() : null;
+    $('sl_len').textContent = a && b && b > a ? `睡眠 ${durTxt(b - a)}` : a && !b ? '「起きた」が空欄なので、睡眠中として記録します' : '';
+  };
+  $('sheet').querySelectorAll('[data-st]').forEach(c => c.onclick = () => { $('sl_start').value = toInput(+c.dataset.st); upd(); });
+  $('sheet').querySelectorAll('[data-en]').forEach(c => c.onclick = () => { $('sl_end').value = c.dataset.en === 'now' ? toInput(Date.now()) : ''; upd(); });
+  $('sl_start').oninput = upd; $('sl_end').oninput = upd;
+  $('sl_cancel').onclick = closeSheet;
+  $('sl_save').onclick = () => {
+    if(!$('sl_start').value){ toast('寝た時刻を入れてね'); return; }
+    const t = new Date($('sl_start').value).getTime();
+    const end = $('sl_end').value ? new Date($('sl_end').value).getTime() : null;
+    if(t > Date.now() + MIN){ toast('寝た時刻が未来になっています'); return; }
+    if(end && end <= t){ toast('起きた時刻が寝た時刻より前です'); return; }
+    if(!end && !on && S.events.find(e => e.type === 'sleep' && !e.end)){ toast('もう睡眠中の記録があります'); return; }
+    const ev = on ? { ...on, t, end } : { id: uid(), type: 'sleep', t, end };
+    putEvent(ev);
+    closeSheet();
+    toast(end ? `睡眠 ${durTxt(end - t)} を記録しました ✓` : `${hm(t)}から睡眠中として記録しました ✓`);
+  };
+  upd();
 }
 
 /* ---------- 記録フォーム ---------- */
@@ -1317,6 +1397,7 @@ function saveForm(){
   if(note) ev.memo = note;
 
   const rd = F.returnDay;
+  if(ev.type === 'feed' && !F.id) endSleepAt(ev.startT || ev.t);
   putEvent(ev);
   closeSheet();
   if(ev.type === 'diaper' && ev.color && ev.color <= 3) showStoolAlert(ev.color);
