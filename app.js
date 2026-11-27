@@ -454,6 +454,15 @@ function renderToday(){
       <button class="act" style="background:var(--g-memo)" data-act="memo"><b>${ICON.memo}</b><span class="al">メモ<small>入力</small></span></button>
     </div>
     <p class="act-hint">タップですぐ記録（母乳はタイマー） ・ <b>長押し</b>で詳しく入力</p>
+    <div class="mini-bar${miniShown ? ' show' : ''}" id="miniBar" aria-hidden="${miniShown ? 'false' : 'true'}">
+      ${[['breast', 'var(--g-breast)', ICON.breast, btLoad() ? '計測中' : '母乳'],
+         ['milk', 'var(--g-feed)', ICON.feed, 'ミルク'],
+         ['sleep', 'var(--g-sleep)', ongoing ? ICON.wake : ICON.sleep, ongoing ? '起きた' : '寝た'],
+         ['diaper', 'var(--g-diaper)', ICON.diaper, 'おむつ'],
+         ['temp', 'var(--g-temp)', ICON.temp, '体温'],
+         ['memo', 'var(--g-memo)', ICON.memo, 'メモ']]
+        .map(([k, g, ic, l]) => `<button class="mini" data-act="${k}" style="background:${g}" tabindex="-1">${ic}<span>${l}</span></button>`).join('')}
+    </div>
     <button class="brand-pill" id="brandPill">${ICON.diaper}<span>${S.diaperBrand ? `おむつ：<b>${esc(S.diaperBrand)}</b>` : '使っているおむつを選ぶ（比較用）'}</span><i>変更 ›</i></button>
     ${tasksHTML()}
     ${notesHTML()}
@@ -471,6 +480,7 @@ function renderToday(){
     <div class="card"><h3>今日のタイムライン</h3>${timelineHTML(list)}</div>
   `;
   $('v-today').querySelectorAll('[data-act]').forEach(bindActButton);
+  watchActGrid();
   if($('wakeBanner')) $('wakeBanner').onclick = quickSleep;
   if($('al_reg')) $('al_reg').onclick = () => openAlarmSheet();
   if($('btBanner')){ $('btBanner').onclick = openBreastTimer; btTick(); }
@@ -988,6 +998,22 @@ function timelineHTML(list, asc = false){
     </li>`;
   }).join('') + '</ul>';
 }
+// 記録ボタンが画面の外に出たら、上に小さいボタンのバーを出す（スクロールしても付いてくる）
+let actObserver = null, miniShown = false;
+function watchActGrid(){
+  if(actObserver) actObserver.disconnect();
+  const grid = document.querySelector('#v-today .act-grid'), bar = $('miniBar');
+  if(!grid || !bar || !('IntersectionObserver' in window)) return;
+  actObserver = new IntersectionObserver(([en]) => {
+    const show = !en.isIntersecting && en.boundingClientRect.top < 0;
+    miniShown = show;
+    bar.classList.toggle('show', show);
+    bar.setAttribute('aria-hidden', show ? 'false' : 'true');
+    bar.querySelectorAll('button').forEach(b => b.tabIndex = show ? 0 : -1);
+  }, { threshold: 0 });
+  actObserver.observe(grid);
+}
+
 // ボタン：タップで即記録、授乳とおむつは長押しで入力画面
 function bindActButton(b){
   const t = b.dataset.act;
