@@ -1004,9 +1004,13 @@ function watchActGrid(){
   if(actObserver) actObserver.disconnect();
   const grid = document.querySelector('#v-today .act-grid'), bar = $('miniBar');
   if(!grid || !bar || !('IntersectionObserver' in window)) return;
+  // 下のメニューの高さに合わせて、そのすぐ上に出す
+  const nav = document.querySelector('nav');
+  if(nav) document.documentElement.style.setProperty('--navh', nav.offsetHeight + 'px');
   actObserver = new IntersectionObserver(([en]) => {
     const show = !en.isIntersecting && en.boundingClientRect.top < 0;
     miniShown = show;
+    document.body.classList.toggle('mini-on', show);
     bar.classList.toggle('show', show);
     bar.setAttribute('aria-hidden', show ? 'false' : 'true');
     bar.querySelectorAll('button').forEach(b => b.tabIndex = show ? 0 : -1);
